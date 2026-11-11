@@ -23,6 +23,12 @@ Open the local URL printed by Vite. Without Supabase environment values, family 
 
 When configured, family records and the encrypted journal envelope sync through Supabase. The app intentionally has no sign-in: anyone with the app link can read and edit shared family records, and can read or replace the encrypted journal envelope. Journal contents and photos remain encrypted in the browser; use a strong passphrase and keep the recovery code safe. Never put a Supabase service-role key in a `VITE_` variable or in the browser app.
 
+## Enable AI note refinement and assistant
+
+Set `GROQ_API_KEY` in `.env.local` for local use, or add it as a server environment variable in Vercel. It must not use a `VITE_` prefix: the key is read only by the local middleware or `/api/ai/*` serverless function. The app uses Groq's `openai/gpt-oss-120b` model to polish habit and task notes, extract a short summary and key ideas, and answer questions or carry out supported Daybook actions. Note text and the records included in an assistant conversation are sent to Groq for processing. The public, passwordless app can be used by anyone with its link, so set provider spending limits and rotate any key that has been shared publicly.
+
+The AI endpoint applies a best-effort per-IP request limit. Browser reminders use the Web Notifications API while Daybook is open; browser and operating-system scheduling policies may delay notifications when the app is suspended or closed.
+
 ## Where photos are stored
 
 Photos added to the journal are resized and converted to JPEG in the browser, then encrypted together with journal text. With Supabase configured, the encrypted envelope (including the encrypted photo data) is stored in the `private_journal.envelope` Postgres row. It does not use a Supabase Storage bucket, and Supabase only receives ciphertext. Without Supabase configured, that ciphertext is saved in the local `.daybook` vault file on the computer running Vite. Photos are not saved into the phone's photo library.
@@ -33,7 +39,7 @@ This means each save uploads the journal envelope, including its photos. Keep th
 
 1. Push this project to a Git provider and import the repository in Vercel.
 2. Keep the project root at the repository root. `vercel.json` sets the Vite build command, `dist` output, and client-side route fallback.
-3. In Vercel **Project Settings → Environment Variables**, add `VITE_SUPABASE_URL` and `VITE_SUPABASE_ANON_KEY` for Preview and Production (and Development if desired).
+3. In Vercel **Project Settings → Environment Variables**, add `VITE_SUPABASE_URL`, `VITE_SUPABASE_ANON_KEY`, and server-only `GROQ_API_KEY` for Preview and Production (and Development if desired).
 4. Deploy or redeploy after setting the variables. Vite embeds these public values during build, so changing them requires a new deployment.
 5. Open the deployed URL over HTTPS, then check the Settings page for sync status and create or unlock the journal.
 
