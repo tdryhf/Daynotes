@@ -530,6 +530,7 @@ function App() {
       {assistantOpen && <AssistantDialog records={records} onClose={() => setAssistantOpen(false)} onToolCall={executeAssistantTool} />}
       {dialog && <EntryDialog key={editingHabit?.id ?? `new-${dialog}`} kind={dialog} habit={editingHabit ?? undefined} onClose={() => { setDialog(null); setEditingHabit(null); }} onSave={(fields) => dialog === "habit" ? saveHabit(fields) : addRecord(dialog, fields)} />}
       {timerHabit && <TimerDialog habit={timerHabit} seconds={timerSeconds} minutes={timerMinutes} running={timerRunning} onMinutes={setTimerMinutes} onStart={() => { if (timerSeconds === 0) setTimerSeconds(timerMinutes * 60); setTimerRunning(true); }} onPause={() => setTimerRunning(false)} onStop={() => { setTimerRunning(false); setTimerSeconds(0); }} onDone={() => { toggleCheckin(timerHabit, new Date()); setTimerRunning(false); setTimerHabit(null); setToast(`${timerHabit.name} checked off.`); }} onClose={() => { setTimerRunning(false); setTimerHabit(null); }} />}
+      <button className="assistant-fab" onClick={() => setAssistantOpen(true)} aria-label="Open Daybook assistant" title="Daybook assistant"><Sparkles size={17} /></button>
       <div className="live-toast" role="status" aria-live="polite">{toast}</div>
     </div>
   );
