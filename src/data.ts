@@ -117,6 +117,51 @@ export function calculateRecentProgress(records: AppRecord[], habits: Habit[], e
   return { days, targets, total: days.reduce((sum, day) => sum + day.completed, 0), activeDays: days.filter((day) => day.completed > 0).length };
 }
 
+export function calculateConsistencyGrid(records: AppRecord[], habits: Habit[], endDate: Date, weeks = 12) {
+  const end = new Date(endDate.getFullYear(), endDate.getMonth(), endDate.getDate(), 12);
+  const monday = new Date(end);
+  monday.setDate(monday.getDate() - ((monday.getDay() + 6) % 7) - (weeks - 1) * 7);
+  const checkins = records.filter((record): record is CheckIn => record.type === "checkin" && record.completed && !record.deletedAt);
+  const cells = Array.from({ length: weeks * 7 }, (_, index) => {
+    const date = new Date(monday);
+    date.setDate(monday.getDate() + index);
+    const key = dateKey(date);
+    const completed = checkins.filter((item) => item.date === key && habits.some((habit) => habit.id === item.habitId)).length;
+    const eligible = key <= dateKey(end) && habits.length > 0;
+    const rate = eligible ? Math.round((completed / habits.length) * 100) : 0;
+    return { date: key, completed, total: habits.length, rate, eligible };
+  });
+  const eligibleDays = cells.filter((cell) => cell.eligible);
+  const completedCount = eligibleDays.reduce((sum, cell) => sum + cell.completed, 0);
+  const possibleCount = eligibleDays.reduce((sum, cell) => sum + cell.total, 0);
+  let currentStreak = 0;
+  let streakIndex = eligibleDays.length - 1;
+  if (streakIndex >= 0 && eligibleDays[streakIndex].date === dateKey(end) && eligibleDays[streakIndex].completed === 0) streakIndex -= 1;
+  for (let index = streakIndex; index >= 0; index -= 1) {
+    if (eligibleDays[index].completed > 0) currentStreak += 1;
+    else break;
+  }
+  const habitConsistency = habits.map((habit) => {
+    const count = checkins.filter((item) => item.habitId === habit.id && item.date >= cells[0]?.date && item.date <= dateKey(end)).length;
+    const start = parseDateKey(cells[0]?.date ?? dateKey(end));
+    const months = (end.getFullYear() - start.getFullYear()) * 12 + end.getMonth() - start.getMonth() + 1;
+    const expected = habit.goal * (habit.cadence === "week" ? weeks : months);
+    return { id: habit.id, name: habit.name, count, expected, percent: expected ? Math.min(100, Math.round((count / expected) * 100)) : 0 };
+  }).sort((a, b) => b.percent - a.percent || b.count - a.count);
+  const weekly = Array.from({ length: weeks }, (_, weekIndex) => {
+    const week = cells.slice(weekIndex * 7, weekIndex * 7 + 7).filter((cell) => cell.eligible);
+    const total = week.reduce((sum, cell) => sum + cell.completed, 0);
+    const possible = week.reduce((sum, cell) => sum + cell.total, 0);
+    return { label: week.length ? week[0].date.slice(5) : "", rate: possible ? Math.round((total / possible) * 100) : 0, total, possible };
+  });
+  return { cells, eligibleDays: eligibleDays.length, completedCount, possibleCount, percent: possibleCount ? Math.round((completedCount / possibleCount) * 100) : 0, activeDays: eligibleDays.filter((cell) => cell.completed > 0).length, currentStreak, habitConsistency, weekly };
+}
+
+function parseDateKey(value: string) {
+  const [year, month, day] = value.split("-").map(Number);
+  return new Date(year, month - 1, day, 12);
+}
+
 export function isSampleData() {
   return localStorage.getItem(SAMPLE_KEY) !== "cleared";
 }

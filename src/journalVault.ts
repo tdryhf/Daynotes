@@ -1,6 +1,6 @@
 export type JournalPage = { id: string; text: string; updatedAt: number };
 export type JournalPhoto = { id: string; label: string; image: string; addedAt: number };
-export type JournalContent = { pages: JournalPage[]; photos: JournalPhoto[] };
+export type JournalContent = { pages: JournalPage[]; photos: JournalPhoto[]; stickyNote?: string };
 export type JournalEnvelope = {
   passwordSalt: string; passwordIv: string; wrappedKey: string;
   recoverySalt: string; recoveryIv: string; recoveryWrappedKey: string;
@@ -30,7 +30,7 @@ async function decryptBytes(key: CryptoKey, iv: string, ciphertext: string) {
 const exportKey = (key: CryptoKey) => crypto.subtle.exportKey("raw", key);
 const importDataKey = (raw: ArrayBuffer) => crypto.subtle.importKey("raw", raw, { name: "AES-GCM" }, false, ["encrypt", "decrypt"]);
 
-export const emptyJournal = (): JournalContent => ({ pages: [{ id: crypto.randomUUID(), text: "", updatedAt: Date.now() }], photos: [] });
+export const emptyJournal = (): JournalContent => ({ pages: [{ id: crypto.randomUUID(), text: "", updatedAt: Date.now() }], photos: [], stickyNote: "" });
 
 async function seal(content: JournalContent, dataKey: CryptoKey, passwordSalt: Uint8Array, passwordKey: CryptoKey, recoverySalt: Uint8Array, recoveryKey: CryptoKey): Promise<JournalEnvelope> {
   const [passwordWrap, recoveryWrap, body] = await Promise.all([
@@ -56,7 +56,8 @@ export async function openVault(envelope: JournalEnvelope, password: string) {
   try {
     const passwordKey = await derive(password, from64(envelope.passwordSalt));
     const dataKey = await importDataKey((await decryptBytes(passwordKey, envelope.passwordIv, envelope.wrappedKey)).buffer);
-    const content = JSON.parse(decoder.decode(await decryptBytes(dataKey, envelope.contentIv, envelope.ciphertext))) as JournalContent;
+    const saved = JSON.parse(decoder.decode(await decryptBytes(dataKey, envelope.contentIv, envelope.ciphertext))) as JournalContent;
+    const content = { ...saved, stickyNote: saved.stickyNote ?? "" };
     return { key: dataKey, content };
   } catch { throw new Error("That passphrase didn’t open the journal. Try again."); }
 }
@@ -76,7 +77,8 @@ export async function resetPassword(envelope: JournalEnvelope, code: string, new
   try {
     const recoveryKey = await derive(code.replace(/-/g, "").toUpperCase(), from64(envelope.recoverySalt));
     const dataKey = await importDataKey((await decryptBytes(recoveryKey, envelope.recoveryIv, envelope.recoveryWrappedKey)).buffer);
-    const content = JSON.parse(decoder.decode(await decryptBytes(dataKey, envelope.contentIv, envelope.ciphertext))) as JournalContent;
+    const saved = JSON.parse(decoder.decode(await decryptBytes(dataKey, envelope.contentIv, envelope.ciphertext))) as JournalContent;
+    const content = { ...saved, stickyNote: saved.stickyNote ?? "" };
     const passwordSalt = random(16), recoverySalt = random(16), newCode = encodeCode(random(18));
     const [passwordKey, nextRecoveryKey] = await Promise.all([derive(newPassword, passwordSalt), derive(newCode.replace(/-/g, ""), recoverySalt)]);
     const nextEnvelope = await seal(content, dataKey, passwordSalt, passwordKey, recoverySalt, nextRecoveryKey);
