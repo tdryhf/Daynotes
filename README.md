@@ -23,9 +23,9 @@ Open the local URL printed by Vite. Without Supabase environment values, family 
 
 When configured, family records and the encrypted journal envelope sync through Supabase. The app intentionally has no sign-in: anyone with the app link can read and edit shared family records, and can read or replace the encrypted journal envelope. Journal contents and photos remain encrypted in the browser; use a strong passphrase and keep the recovery code safe. Never put a Supabase service-role key in a `VITE_` variable or in the browser app.
 
-## Enable AI note refinement and assistant
+## Enable AI note refinement, goal coaching, and assistant
 
-Set `GROQ_API_KEY` in `.env.local` for local use, or add it as a server environment variable in Vercel. It must not use a `VITE_` prefix: the key is read only by the local middleware or `/api/ai/*` serverless function. The app uses Groq's `openai/gpt-oss-120b` model to polish habit and task notes, extract a short summary and key ideas, and answer questions or carry out supported Daybook actions. Note text and the records included in an assistant conversation are sent to Groq for processing. The public, passwordless app can be used by anyone with its link, so set provider spending limits and rotate any key that has been shared publicly.
+Set `GROQ_API_KEY` in `.env.local` for local use, or add it as a server environment variable in Vercel. It must not use a `VITE_` prefix: the key is read only by the local middleware or `/api/ai/*` serverless function. The app uses Groq's `openai/gpt-oss-120b` model to polish habit and task notes, coach users through a SMART goal draft, and answer questions or carry out supported Daybook actions. Goal drafts are reviewed in the app before saving. Goal coaching and assistant context include relevant goal, habit, and to-do records; note text is sent for note refinement. The public, passwordless app can be used by anyone with its link, so set provider spending limits and rotate any key that has been shared publicly.
 
 The AI endpoint applies a best-effort per-IP request limit. Browser reminders use the Web Notifications API while Daybook is open; browser and operating-system scheduling policies may delay notifications when the app is suspended or closed.
 
