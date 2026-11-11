@@ -8,9 +8,9 @@ import {
 import { dateKey, isSampleData, liveRecords, loadLocalRecords, mergeRecords, monthCheckinCount, SAMPLE_KEY, saveLocalRecords, STORAGE_KEY } from "./data";
 import { cloudConfigured, readCloudRecords, writeCloudRecords, readPrivateJournal, writePrivateJournal } from "./sync";
 import { changePassword, createVault, openVault, resetPassword, sealContent, type JournalContent, type JournalEnvelope } from "./journalVault";
-import type { AppRecord, CustomTracker, FamilyDate, Goal, Habit, Idea, JournalEntry, JournalNote, Task, TaskCategory, View } from "./types";
+import type { AppRecord, CustomTracker, FamilyDate, Goal, GoalDraft, Habit, Idea, JournalEntry, JournalNote, Task, TaskCategory, View } from "./types";
 import { refineNote, type AssistantToolCall } from "./ai";
-import { AssistantDialog, ConsistencyVisualization, GoalsPage, HabitDetailsDialog, RemindersPage, TaskDetailsDialog, TaskTitleButton, TrackersPage } from "./features";
+import { AssistantDialog, ConsistencyVisualization, GoalCoachDialog, GoalsPage, HabitDetailsDialog, RemindersPage, TaskDetailsDialog, TaskTitleButton, TrackerDetailsDialog, TrackersPage } from "./features";
 
 const navigation: { id: View; label: string; icon: typeof Home }[] = [
   { id: "today", label: "Today", icon: Home },
@@ -30,6 +30,20 @@ const localDate = (value: Date) => new Date(value.getFullYear(), value.getMonth(
 const todayKey = () => dateKey(new Date());
 const parseDate = (value: string) => new Date(`${value}T12:00:00`);
 const dateLabel = (value: string, options: Intl.DateTimeFormatOptions = { weekday: "short", month: "short", day: "numeric" }) => parseDate(value).toLocaleDateString(undefined, options);
+const timeLabel = (value: string) => {
+  const [hours, minutes] = value.split(":").map(Number);
+  if (!Number.isInteger(hours) || !Number.isInteger(minutes) || hours < 0 || hours > 23 || minutes < 0 || minutes > 59) return value;
+  return new Date(2000, 0, 1, hours, minutes).toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" });
+};
+const uniqueFamilyDates = (events: FamilyDate[]) => {
+  const seen = new Set<string>();
+  return events.filter((event) => {
+    const key = JSON.stringify([event.date, event.title.trim().toLowerCase(), event.time ?? "", event.note?.trim().toLowerCase() ?? ""]);
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+};
 const monthLabel = (value: Date) => value.toLocaleDateString(undefined, { month: "long", year: "numeric" });
 const weekDates = (date: Date) => {
   const monday = localDate(date);
@@ -63,7 +77,10 @@ function App() {
   const [dialog, setDialog] = useState<DialogKind>(null);
   const [detailHabit, setDetailHabit] = useState<Habit | null>(null);
   const [detailTask, setDetailTask] = useState<Task | null>(null);
+  const [detailTracker, setDetailTracker] = useState<CustomTracker | null>(null);
   const [assistantOpen, setAssistantOpen] = useState(false);
+  const [goalCoachOpen, setGoalCoachOpen] = useState(false);
+  const [goalDraft, setGoalDraft] = useState<GoalDraft | null>(null);
   const [editingHabit, setEditingHabit] = useState<Habit | null>(null);
   const [timerHabit, setTimerHabit] = useState<Habit | null>(null);
   const [timerSeconds, setTimerSeconds] = useState(0);
@@ -93,7 +110,7 @@ function App() {
   const trackers = liveRecords(records, "tracker");
   const trackerEntries = liveRecords(records, "trackerEntry");
   const reminders = liveRecords(records, "reminder");
-  const completedToday = records.filter((record) => record.type === "checkin" && record.date === todayKey() && record.completed && !record.deletedAt).length;
+  const completedToday = habits.filter((habit) => records.some((record) => record.type === "checkin" && record.habitId === habit.id && record.date === todayKey() && record.completed && !record.deletedAt)).length;
   const dueToday = tasks.filter((task) => !task.completed && task.dueDate === todayKey());
 
   useEffect(() => {
@@ -266,9 +283,23 @@ function App() {
   };
 
   const addRecord = (type: Exclude<DialogKind, null>, fields: Record<string, unknown>) => {
-    const record = { ...fields, id: id(), type, updatedAt: Date.now() } as AppRecord;
-    saveRecord(record);
+    const recordId = id();
+    const now = Date.now();
+    const supportingHabitIds = type === "goal" && Array.isArray(fields.supportingHabitIds) ? fields.supportingHabitIds as string[] : [];
+    const supportingTaskIds = type === "goal" && Array.isArray(fields.supportingTaskIds) ? fields.supportingTaskIds as string[] : [];
+    const storedFields = { ...fields };
+    delete storedFields.supportingHabitIds;
+    delete storedFields.supportingTaskIds;
+    const record = { ...storedFields, id: recordId, type, updatedAt: now } as AppRecord;
+    if (type === "goal") {
+      setRecords((current) => [...current.map((item) => {
+        if (item.type === "habit" && supportingHabitIds.includes(item.id)) return { ...item, goalIds: [...new Set([...(item.goalIds ?? []), recordId])], updatedAt: now };
+        if (item.type === "task" && supportingTaskIds.includes(item.id)) return { ...item, goalIds: [...new Set([...(item.goalIds ?? []), recordId])], updatedAt: now };
+        return item;
+      }), record]);
+    } else saveRecord(record);
     setDialog(null);
+    setGoalDraft(null);
     setToast(type === "habit" ? "Habit added." : type === "task" ? "To-do added." : type === "goal" ? "Goal set." : type === "tracker" ? "Tracker ready." : type === "reminder" ? "Reminder saved." : type === "idea" ? "Idea saved." : type === "date" ? "Date added." : "Memory saved.");
   };
 
@@ -306,7 +337,7 @@ function App() {
     saveRecord(record);
   };
 
-  const toggleTask = (task: Task) => saveRecord({ ...task, completed: !task.completed, updatedAt: Date.now(), sample: false });
+  const toggleTask = (task: Task) => { const completed = !task.completed; saveRecord({ ...task, completed, completedAt: completed ? todayKey() : undefined, updatedAt: Date.now(), sample: false }); };
   const logGoalProgress = (goal: Goal, amount: number, date: string, note?: string) => saveRecord({ id: id(), type: "goalProgress", goalId: goal.id, amount, date, note: note || undefined, updatedAt: Date.now() });
   const logTrackerEntry = (tracker: CustomTracker, value: number, date: string, note?: string) => saveRecord({ id: id(), type: "trackerEntry", trackerId: tracker.id, value, date, note: note || undefined, updatedAt: Date.now() });
   const deleteTask = (task: Task) => {
@@ -344,12 +375,14 @@ function App() {
       case "create_habit": {
         const name = textArg("name"); const goal = numArg("goal"); const cadence = textArg("cadence");
         if (!name || goal < 1 || !["week", "month"].includes(cadence)) return { ok: false, message: "A habit needs a name, target, and weekly or monthly cadence." };
-        const habit = created("habit", { name, goal, cadence, successCriteria: textArg("successCriteria") || undefined });
+        const goalIds = Array.isArray(args.goalIds) ? args.goalIds.filter((value): value is string => typeof value === "string" && goals.some((item) => item.id === value)) : [];
+        const habit = created("habit", { name, goal, cadence, successCriteria: textArg("successCriteria") || undefined, goalIds });
         return { ok: true, action: "habit_created", name, id: habit.id };
       }
       case "create_task": {
         const title = textArg("title"); if (!title) return { ok: false, message: "A task needs a title." };
-        const task = created("task", { title, list: textArg("list", "Personal") || "Personal", dueDate: textArg("dueDate") || undefined, completed: false });
+        const goalIds = Array.isArray(args.goalIds) ? args.goalIds.filter((value): value is string => typeof value === "string" && goals.some((item) => item.id === value)) : [];
+        const task = created("task", { title, list: textArg("list", "Personal") || "Personal", dueDate: textArg("dueDate") || undefined, completed: false, goalIds });
         if (textArg("comment")) await saveNote("task", task.id, title, textArg("comment"), todayKey());
         return { ok: true, action: "task_created", title, id: task.id };
       }
@@ -369,9 +402,9 @@ function App() {
         return { ok: true, action: "habit_checked_in", habitName: habit.name, date };
       }
       case "create_goal": {
-        const title = textArg("title"), startDate = textArg("startDate"), endDate = textArg("endDate"), target = numArg("target"), unit = textArg("unit");
-        if (!title || !/^\d{4}-\d{2}-\d{2}$/.test(startDate) || !/^\d{4}-\d{2}-\d{2}$/.test(endDate) || endDate < startDate || target <= 0 || !unit) return { ok: false, message: "A goal needs a title, valid start and end dates, a positive target, and a unit." };
-        const goal = created("goal", { title, description: textArg("description") || undefined, startDate, endDate, target, unit });
+        const title = textArg("title"), startDate = textArg("startDate"), endDate = textArg("endDate"), target = numArg("target"), unit = textArg("unit"), achievablePlan = textArg("achievablePlan"), relevance = textArg("relevance");
+        if (!title || !/^\d{4}-\d{2}-\d{2}$/.test(startDate) || !/^\d{4}-\d{2}-\d{2}$/.test(endDate) || endDate < startDate || target <= 0 || !unit || !achievablePlan || !relevance) return { ok: false, message: "A SMART goal needs a clear outcome, measurable target and unit, realistic plan, personal reason, and valid start and end dates." };
+        const goal = created("goal", { title, description: textArg("description") || undefined, achievablePlan, relevance, startDate, endDate, target, unit });
         return { ok: true, action: "goal_created", title, id: goal.id };
       }
       case "create_tracker": {
@@ -455,7 +488,7 @@ function App() {
   };
 
   const pageTitle: Record<View, string> = {
-    today: "Today", habits: "Habits", tasks: "Family to-dos", goals: "Time-bound goals", trackers: "Your trackers", ideas: "Idea shelf",
+    today: "Today", habits: "Habits", tasks: "Family to-dos", goals: "SMART goals", trackers: "Your trackers", ideas: "Idea shelf",
     dates: "Important dates", journal: "Private journal", reminders: "Reminders", settings: "Your daybook",
   };
 
@@ -508,11 +541,11 @@ function App() {
             </div>
           </div>
 
-          {view === "today" && <TodayPage habits={habits} records={records} tasks={dueToday} onToggle={toggleCheckin} onTimer={(habit) => { setTimerHabit(habit); setTimerSeconds((habit.minutes || 20) * 60); setTimerMinutes(habit.minutes || 20); setTimerRunning(false); }} onAdd={() => setDialog("habit")} onNavigate={chooseView} onHabitClick={setDetailHabit} completedToday={completedToday} />}
-          {view === "habits" && <HabitsPage habits={habits} records={records} month={month} setMonth={setMonth} mode={matrixMode} setMode={setMatrixMode} onToggle={toggleCheckin} onAdd={() => setDialog("habit")} onRemove={deleteHabit} onHabitClick={setDetailHabit} />}
-          {view === "tasks" && <TasksPage tasks={tasks} notes={notes} filter={taskFilter} setFilter={setTaskFilter} categoryFilter={taskCategoryFilter} setCategoryFilter={setTaskCategoryFilter} onToggle={toggleTask} onDelete={deleteTask} onAdd={() => setDialog("task")} onTaskClick={setDetailTask} />}
-          {view === "goals" && <GoalsPage goals={goals} progress={goalProgress} notes={notes} onAdd={() => setDialog("goal")} onLog={logGoalProgress} onSaveNote={(goal, text, date) => saveNote("goal", goal.id, goal.title, text, date)} onDelete={deleteGoal} />}
-          {view === "trackers" && <TrackersPage trackers={trackers} entries={trackerEntries} notes={notes} onAdd={() => setDialog("tracker")} onLog={logTrackerEntry} onSaveNote={(tracker, text, date) => saveNote("tracker", tracker.id, tracker.name, text, date)} onDelete={deleteTracker} />}
+          {view === "today" && <TodayPage habits={habits} records={records} tasks={dueToday} goals={goals} onToggle={toggleCheckin} onTimer={(habit) => { setTimerHabit(habit); setTimerSeconds((habit.minutes || 20) * 60); setTimerMinutes(habit.minutes || 20); setTimerRunning(false); }} onAdd={() => setDialog("habit")} onNavigate={chooseView} onHabitClick={setDetailHabit} completedToday={completedToday} />}
+          {view === "habits" && <HabitsPage habits={habits} goals={goals} records={records} month={month} setMonth={setMonth} mode={matrixMode} setMode={setMatrixMode} onToggle={toggleCheckin} onAdd={() => setDialog("habit")} onRemove={deleteHabit} onHabitClick={setDetailHabit} />}
+          {view === "tasks" && <TasksPage tasks={tasks} goals={goals} notes={notes} filter={taskFilter} setFilter={setTaskFilter} categoryFilter={taskCategoryFilter} setCategoryFilter={setTaskCategoryFilter} onToggle={toggleTask} onDelete={deleteTask} onAdd={() => setDialog("task")} onTaskClick={setDetailTask} />}
+          {view === "goals" && <GoalsPage goals={goals} progress={goalProgress} notes={notes} habits={habits} tasks={tasks} records={records} onCoach={() => setGoalCoachOpen(true)} onLog={logGoalProgress} onSaveNote={(goal, text, date) => saveNote("goal", goal.id, goal.title, text, date)} onDelete={deleteGoal} />}
+          {view === "trackers" && <TrackersPage trackers={trackers} entries={trackerEntries} notes={notes} onAdd={() => setDialog("tracker")} onLog={logTrackerEntry} onSaveNote={(tracker, text, date) => saveNote("tracker", tracker.id, tracker.name, text, date)} onDelete={deleteTracker} onSelect={setDetailTracker} />}
           {view === "ideas" && <IdeasPage ideas={ideas} filter={ideaFilter} setFilter={setIdeaFilter} onDelete={(idea) => saveRecord({ ...idea, deletedAt: Date.now(), updatedAt: Date.now() })} onAdd={() => setDialog("idea")} />}
           {view === "dates" && <DatesPage dates={dates} onDelete={(event) => saveRecord({ ...event, deletedAt: Date.now(), updatedAt: Date.now() })} onAdd={() => setDialog("date")} />}
           {view === "journal" && <JournalPage legacyEntries={journal} onLegacyMigrated={() => setRecords((current) => current.filter((record) => record.type !== "journal"))} />}
@@ -527,8 +560,10 @@ function App() {
 
       {detailHabit && <HabitDetailsDialog habit={detailHabit} notes={notes} onClose={() => setDetailHabit(null)} onEdit={() => editHabit(detailHabit)} onDelete={() => deleteHabit(detailHabit)} onSaveNote={(text, date) => saveNote("habit", detailHabit.id, detailHabit.name, text, date)} />}
       {detailTask && <TaskDetailsDialog task={detailTask} notes={notes} onClose={() => setDetailTask(null)} onSaveNote={(text, date) => saveNote("task", detailTask.id, detailTask.title, text, date)} />}
+      {detailTracker && <TrackerDetailsDialog tracker={detailTracker} entries={trackerEntries.filter((entry) => entry.trackerId === detailTracker.id)} notes={notes} onClose={() => setDetailTracker(null)} onUpdate={(fields) => { const updated = { ...detailTracker, ...fields, updatedAt: Date.now(), sample: false }; saveRecord(updated); setDetailTracker(updated); }} onLog={(value, date, note) => logTrackerEntry(detailTracker, value, date, note)} onSaveNote={(text, date) => saveNote("tracker", detailTracker.id, detailTracker.name, text, date)} />}
       {assistantOpen && <AssistantDialog records={records} onClose={() => setAssistantOpen(false)} onToolCall={executeAssistantTool} />}
-      {dialog && <EntryDialog key={editingHabit?.id ?? `new-${dialog}`} kind={dialog} habit={editingHabit ?? undefined} onClose={() => { setDialog(null); setEditingHabit(null); }} onSave={(fields) => dialog === "habit" ? saveHabit(fields) : addRecord(dialog, fields)} />}
+      {goalCoachOpen && <GoalCoachDialog records={records} onClose={() => setGoalCoachOpen(false)} onUseGoal={(draft) => { setGoalDraft(draft); setGoalCoachOpen(false); setDialog("goal"); }} />}
+      {dialog && <EntryDialog key={editingHabit?.id ?? `new-${dialog}`} kind={dialog} habit={editingHabit ?? undefined} goals={goals} habits={habits} tasks={tasks} initialGoal={dialog === "goal" ? goalDraft ?? undefined : undefined} onClose={() => { setDialog(null); setEditingHabit(null); setGoalDraft(null); }} onSave={(fields) => dialog === "habit" ? saveHabit(fields) : addRecord(dialog, fields)} />}
       {timerHabit && <TimerDialog habit={timerHabit} seconds={timerSeconds} minutes={timerMinutes} running={timerRunning} onMinutes={setTimerMinutes} onStart={() => { if (timerSeconds === 0) setTimerSeconds(timerMinutes * 60); setTimerRunning(true); }} onPause={() => setTimerRunning(false)} onStop={() => { setTimerRunning(false); setTimerSeconds(0); }} onDone={() => { toggleCheckin(timerHabit, new Date()); setTimerRunning(false); setTimerHabit(null); setToast(`${timerHabit.name} checked off.`); }} onClose={() => { setTimerRunning(false); setTimerHabit(null); }} />}
       <button className="assistant-fab" onClick={() => setAssistantOpen(true)} aria-label="Open Daybook assistant" title="Daybook assistant"><Sparkles size={17} /></button>
       <div className="live-toast" role="status" aria-live="polite">{toast}</div>
@@ -552,7 +587,7 @@ function NavItem({ item, active, onClick, compact = false }: { item: { id: View;
 function pageSubtitle(view: View) {
   const subtitles: Record<View, string> = {
     today: "A little check-in, then on with your day.", habits: "Keep your goals in view, one day at a time.",
-    tasks: "The small things your family wants to get done.", goals: "Choose your window, then build progress one entry at a time.",
+    tasks: "The small things your family wants to get done.", goals: "Turn a clear outcome into small actions you can track.",
     trackers: "Make room for the things you want to measure your own way.", ideas: "A shelf for plans you want to come back to.",
     dates: "Birthdays, plans, and days worth keeping free.", journal: "An unhurried place for thoughts, one page at a time.",
     reminders: "A simple nudge at the time you choose.",
@@ -561,15 +596,17 @@ function pageSubtitle(view: View) {
   return subtitles[view];
 }
 
-function TodayPage({ habits, records, tasks, onToggle, onTimer, onAdd, onNavigate, onHabitClick, completedToday }: {
-  habits: Habit[]; records: AppRecord[]; tasks: Task[]; onToggle: (habit: Habit, date: Date) => void; onTimer: (habit: Habit) => void; onAdd: () => void; onNavigate: (view: View) => void; onHabitClick: (habit: Habit) => void; completedToday: number;
+function TodayPage({ habits, records, tasks, goals, onToggle, onTimer, onAdd, onNavigate, onHabitClick, completedToday }: {
+  habits: Habit[]; records: AppRecord[]; tasks: Task[]; goals: Goal[]; onToggle: (habit: Habit, date: Date) => void; onTimer: (habit: Habit) => void; onAdd: () => void; onNavigate: (view: View) => void; onHabitClick: (habit: Habit) => void; completedToday: number;
 }) {
   const today = new Date();
   const todayCheck = (habitId: string) => records.some((record) => record.type === "checkin" && record.habitId === habitId && record.date === todayKey() && record.completed && !record.deletedAt);
-  const upcoming = liveRecords(records, "date").filter((item) => item.date >= todayKey()).sort((a, b) => a.date.localeCompare(b.date)).slice(0, 2);
+  const upcoming = uniqueFamilyDates(liveRecords(records, "date").filter((item) => item.date >= todayKey()))
+    .sort((a, b) => a.date.localeCompare(b.date) || (a.time ?? "").localeCompare(b.time ?? "") || a.title.localeCompare(b.title))
+    .slice(0, 2);
   return <div className="today-layout">
     <section className="today-ledger paper-sheet" aria-labelledby="today-habits-heading">
-      <div className="ledger-topline"><div><h2 id="today-habits-heading">Your daily check-in</h2><p>Pick up wherever you are.</p></div><span className="day-stamp">{completedToday}<span>done</span></span></div>
+      <div className="ledger-topline"><div><h2 id="today-habits-heading">Your daily check-in</h2><p>Pick up wherever you are.</p></div><span className="day-stamp" aria-label={`${completedToday} of ${habits.length} habits done today`}><span className="day-stamp-count"><strong>{completedToday}</strong><span>/ {habits.length}</span></span><span className="day-stamp-label">done</span></span></div>
       <div className="daily-list">
         {habits.length === 0 && <EmptyState text="Your habit page is blank." detail="Add one small thing you would like to do more often." action="Add a habit" onClick={onAdd} />}
         {habits.slice(0, 8).map((habit) => {
@@ -577,7 +614,7 @@ function TodayPage({ habits, records, tasks, onToggle, onTimer, onAdd, onNavigat
           const progress = countCadence(records, habit, today);
           return <div className={`daily-row ${complete ? "is-complete" : ""}`} key={habit.id}>
             <button className="check-button" onClick={() => onToggle(habit, today)} aria-label={`${complete ? "Uncheck" : "Check off"} ${habit.name}`} aria-pressed={complete}><Check size={15} /></button>
-            <span className="daily-habit-copy"><button className="daily-habit-name habit-detail-trigger" onClick={() => onHabitClick(habit)}>{habit.name}</button>{habit.nonNegotiable && <span className="non-negotiable-badge">Non-negotiable</span>}</span>
+            <span className="daily-habit-copy"><button className="daily-habit-name habit-detail-trigger" onClick={() => onHabitClick(habit)}>{habit.name}</button>{habit.nonNegotiable && <span className="non-negotiable-badge">Non-negotiable</span>}{goals.filter((goal) => habit.goalIds?.includes(goal.id)).map((goal) => <span className="connected-goal-tag" key={goal.id}><Target size={11}/>{goal.title}</span>)}</span>
             {habit.minutes && <button className="timer-link" onClick={() => onTimer(habit)}><Timer size={14} /><span>{habit.minutes} min</span></button>}
             <span className="goal-progress"><strong>{progress}</strong> / {habit.goal}<span className="goal-cadence">{habit.cadence === "month" ? "this month" : "this week"}</span></span>
           </div>;
@@ -594,7 +631,7 @@ function TodayPage({ habits, records, tasks, onToggle, onTimer, onAdd, onNavigat
       </section>
       <section className="upcoming-note">
         <div className="upcoming-heading"><h2>Coming up</h2><button className="text-link" onClick={() => onNavigate("dates")}>See dates</button></div>
-        {upcoming.length ? upcoming.map((event) => <div className="event-line" key={event.id}><time dateTime={event.date}>{dateLabel(event.date, { month: "short", day: "numeric" })}</time><span>{event.title}</span></div>) : <p className="quiet-note">No dates on the family calendar yet.</p>}
+        {upcoming.length ? upcoming.map((event) => <div className="event-line" key={event.id}><time dateTime={event.date}>{dateLabel(event.date, { month: "short", day: "numeric" })}</time><span className="event-copy"><strong>{event.title}</strong>{event.time && <small>{timeLabel(event.time)}</small>}</span></div>) : <p className="quiet-note">No dates on the family calendar yet.</p>}
       </section>
       <div className="daybook-prompt"><Sparkles size={18} /><p>Good habits grow quietly, in all the ordinary moments.</p></div>
     </aside>
@@ -605,8 +642,8 @@ function TodayPage({ habits, records, tasks, onToggle, onTimer, onAdd, onNavigat
   </div>;
 }
 
-function HabitsPage({ habits, records, month, setMonth, mode, setMode, onToggle, onAdd, onRemove, onHabitClick }: {
-  habits: Habit[]; records: AppRecord[]; month: Date; setMonth: (date: Date) => void; mode: "week" | "month"; setMode: (value: "week" | "month") => void; onToggle: (habit: Habit, date: Date) => void; onAdd: () => void; onRemove: (habit: Habit) => void; onHabitClick: (habit: Habit) => void;
+function HabitsPage({ habits, goals, records, month, setMonth, mode, setMode, onToggle, onAdd, onRemove, onHabitClick }: {
+  habits: Habit[]; goals: Goal[]; records: AppRecord[]; month: Date; setMonth: (date: Date) => void; mode: "week" | "month"; setMode: (value: "week" | "month") => void; onToggle: (habit: Habit, date: Date) => void; onAdd: () => void; onRemove: (habit: Habit) => void; onHabitClick: (habit: Habit) => void;
 }) {
   const dates = mode === "week" ? weekDates(new Date()) : monthDates(month);
   const onMonthChange = (offset: number) => setMonth(new Date(month.getFullYear(), month.getMonth() + offset, 1, 12));
@@ -622,7 +659,7 @@ function HabitsPage({ habits, records, month, setMonth, mode, setMode, onToggle,
         <tbody>{habits.map((habit) => {
           const count = countCadence(records, habit, month);
           return <tr key={habit.id}>
-            <th scope="row" className="habit-name-cell"><div className="habit-row-content"><div><span className="habit-title-line"><button className="habit-name-label habit-detail-trigger" onClick={() => onHabitClick(habit)}>{habit.name}</button>{habit.nonNegotiable && <span className="non-negotiable-badge">Non-negotiable</span>}</span><span className="habit-goal-label">{count} of {habit.goal} {habit.cadence === "month" ? "this month" : "this week"}</span></div><button className="habit-remove" onClick={() => onRemove(habit)} aria-label={`Remove habit ${habit.name}`} title={`Remove ${habit.name}`}><Trash2 size={14} /></button></div></th>
+            <th scope="row" className="habit-name-cell"><div className="habit-row-content"><div><span className="habit-title-line"><button className="habit-name-label habit-detail-trigger" onClick={() => onHabitClick(habit)}>{habit.name}</button>{habit.nonNegotiable && <span className="non-negotiable-badge">Non-negotiable</span>}</span><span className="habit-goal-label">{count} of {habit.goal} {habit.cadence === "month" ? "this month" : "this week"}</span>{goals.filter((goal) => habit.goalIds?.includes(goal.id)).map((goal) => <span className="connected-goal-tag" key={goal.id}><Target size={11}/>{goal.title}</span>)}</div><button className="habit-remove" onClick={() => onRemove(habit)} aria-label={`Remove habit ${habit.name}`} title={`Remove ${habit.name}`}><Trash2 size={14} /></button></div></th>
             {dates.map((date) => {
               const complete = hasCheckin(habit, date);
               const isFuture = dateKey(date) > todayKey();
@@ -638,7 +675,7 @@ function HabitsPage({ habits, records, month, setMonth, mode, setMode, onToggle,
   </section>;
 }
 
-function TasksPage({ tasks, notes, filter, setFilter, categoryFilter, setCategoryFilter, onToggle, onDelete, onAdd, onTaskClick }: { tasks: Task[]; notes: JournalNote[]; filter: string; setFilter: (value: string) => void; categoryFilter: string; setCategoryFilter: (value: string) => void; onToggle: (task: Task) => void; onDelete: (task: Task) => void; onAdd: () => void; onTaskClick: (task: Task) => void }) {
+function TasksPage({ tasks, goals, notes, filter, setFilter, categoryFilter, setCategoryFilter, onToggle, onDelete, onAdd, onTaskClick }: { tasks: Task[]; goals: Goal[]; notes: JournalNote[]; filter: string; setFilter: (value: string) => void; categoryFilter: string; setCategoryFilter: (value: string) => void; onToggle: (task: Task) => void; onDelete: (task: Task) => void; onAdd: () => void; onTaskClick: (task: Task) => void }) {
   const lists = [...new Set(tasks.map((task) => task.list || "Family"))];
   const filters = ["Today", "All to-dos", ...lists];
   const shown = tasks.filter((task) => (filter === "All to-dos" || (filter === "Today" ? !task.completed && (!task.dueDate || task.dueDate <= todayKey()) : task.list === filter)) && (categoryFilter === "All categories" || task.category === categoryFilter)).sort((a, b) => Number(a.completed) - Number(b.completed) || (a.dueDate || "9999").localeCompare(b.dueDate || "9999"));
@@ -648,7 +685,7 @@ function TasksPage({ tasks, notes, filter, setFilter, categoryFilter, setCategor
     <div className="task-list">
       {shown.map((task) => <div className={`task-row ${task.completed ? "is-complete" : ""}`} key={task.id}>
         <button className="check-button" aria-label={`${task.completed ? "Reopen" : "Complete"}: ${task.title}`} aria-pressed={task.completed} onClick={() => onToggle(task)}><Check size={15} /></button>
-        <div className="task-main"><TaskTitleButton task={task} noteCount={notes.filter((note) => note.ownerType === "task" && note.ownerId === task.id).length} onClick={() => onTaskClick(task)} />{task.category && <span className="task-category-badge">{task.category}</span>}</div>
+        <div className="task-main"><TaskTitleButton task={task} noteCount={notes.filter((note) => note.ownerType === "task" && note.ownerId === task.id).length} onClick={() => onTaskClick(task)} />{task.category && <span className="task-category-badge">{task.category}</span>}{goals.filter((goal) => task.goalIds?.includes(goal.id)).map((goal) => <span className="connected-goal-tag" key={goal.id}><Target size={11}/>{goal.title}</span>)}</div>
         {task.assignee && <span className="assignee-tag">{task.assignee}</span>}
         {task.dueDate && <time className={`task-date ${task.dueDate < todayKey() && !task.completed ? "is-late" : ""}`} dateTime={task.dueDate}>{dateLabel(task.dueDate, { month: "short", day: "numeric" })}</time>}
         <button className="row-delete" onClick={() => onDelete(task)} aria-label={`Remove to-do ${task.title}`} title={`Remove ${task.title}`}><Trash2 size={15} /></button>
@@ -772,10 +809,11 @@ function EmptyState({ text, detail, action, onClick }: { text: string; detail: s
   return <div className="empty-state"><span className="empty-mark"><Sparkles size={18} /></span><h2>{text}</h2><p>{detail}</p>{action && <button className="soft-button" onClick={onClick}><Plus size={15} /> {action}</button>}</div>;
 }
 
-function EntryDialog({ kind, habit, onClose, onSave }: { kind: Exclude<DialogKind, null>; habit?: Habit; onClose: () => void; onSave: (fields: Record<string, unknown>) => void }) {
+function EntryDialog({ kind, habit, goals, habits, tasks, initialGoal, onClose, onSave }: { kind: Exclude<DialogKind, null>; habit?: Habit; goals: Goal[]; habits: Habit[]; tasks: Task[]; initialGoal?: GoalDraft; onClose: () => void; onSave: (fields: Record<string, unknown>) => void }) {
   const dialogRef = useRef<HTMLDialogElement>(null);
   const [error, setError] = useState("");
   const today = todayKey();
+  const defaultTrackerEnd = (() => { const end = new Date(); end.setDate(end.getDate() + 30); return dateKey(end); })();
   useEffect(() => {
     const dialogElement = dialogRef.current;
     if (!dialogElement) return;
@@ -791,21 +829,21 @@ function EntryDialog({ kind, habit, onClose, onSave }: { kind: Exclude<DialogKin
     if (kind === "habit") {
       const name = value("name"); const goal = Number(value("goal"));
       if (!name || !Number.isFinite(goal) || goal < 1 || goal > 1000) { setError("Add a name and a goal between 1 and 1,000."); return; }
-      onSave({ name, goal, cadence: value("cadence"), minutes: Number(value("minutes")) || undefined, successCriteria: value("successCriteria") || undefined, nonNegotiable: form.get("nonNegotiable") === "on" } as Partial<Habit> as Record<string, unknown>); return;
+      onSave({ name, goal, cadence: value("cadence"), minutes: Number(value("minutes")) || undefined, successCriteria: value("successCriteria") || undefined, nonNegotiable: form.get("nonNegotiable") === "on", goalIds: form.getAll("goalIds").map(String) } as Partial<Habit> as Record<string, unknown>); return;
     }
     if (kind === "task") {
       const title = value("title"); if (!title) { setError("Add a short name for this to-do."); return; }
-      onSave({ title, list: value("list") || "Family", category: (value("category") || undefined) as TaskCategory | undefined, dueDate: value("dueDate") || undefined, assignee: value("assignee") || undefined, completed: false }); return;
+      onSave({ title, list: value("list") || "Family", category: (value("category") || undefined) as TaskCategory | undefined, dueDate: value("dueDate") || undefined, assignee: value("assignee") || undefined, completed: false, goalIds: form.getAll("goalIds").map(String) }); return;
     }
     if (kind === "goal") {
       const title = value("title"), startDate = value("startDate"), endDate = value("endDate"), target = Number(value("target")), unit = value("unit");
-      if (!title || !startDate || !endDate || endDate < startDate || !Number.isFinite(target) || target <= 0 || !unit) { setError("Add a title, valid start and end dates, a positive target, and its unit."); return; }
-      onSave({ title, description: value("description") || undefined, startDate, endDate, target, unit }); return;
+      if (!title || !value("relevance") || !value("achievablePlan") || !startDate || !endDate || endDate < startDate || !Number.isFinite(target) || target <= 0 || !unit) { setError("Complete the outcome, measurable target and unit, realistic plan, reason it matters, and valid start and end dates."); return; }
+      onSave({ title, description: value("description") || undefined, achievablePlan: value("achievablePlan") || undefined, relevance: value("relevance") || undefined, startDate, endDate, target, unit, supportingHabitIds: form.getAll("supportingHabitIds").map(String), supportingTaskIds: form.getAll("supportingTaskIds").map(String) }); return;
     }
     if (kind === "tracker") {
       const name = value("name"), unit = value("unit"), target = Number(value("target")), startDate = value("startDate"), endDate = value("endDate");
-      if (!name || !unit || (value("target") && (!Number.isFinite(target) || target <= 0)) || (startDate && endDate && endDate < startDate)) { setError("Add a name and unit. Check the optional target and date range."); return; }
-      onSave({ name, unit, description: value("description") || undefined, target: value("target") ? target : undefined, startDate: startDate || undefined, endDate: endDate || undefined }); return;
+      if (!name || !unit || !Number.isFinite(target) || target <= 0 || !startDate || !endDate || endDate < startDate) { setError("Add a name, unit, positive measurable target, and valid start and end dates."); return; }
+      onSave({ name, unit, description: value("description") || undefined, target, startDate, endDate }); return;
     }
     if (kind === "reminder") {
       const title = value("title"), dateTime = value("dateTime");
@@ -827,15 +865,16 @@ function EntryDialog({ kind, habit, onClose, onSave }: { kind: Exclude<DialogKin
     onSave({ title, body, date: value("date") || today, tags: value("tags").split(",").map((tag) => tag.trim()).filter(Boolean) });
   };
 
-  const title = kind === "habit" && habit ? "Edit habit" : { habit: "Add a habit", task: "Add a family to-do", goal: "Set a time-bound goal", tracker: "Build a tracker", reminder: "Add a reminder", idea: "Save an idea", date: "Add an important date", journal: "Write a small memory" }[kind];
+  const title = kind === "habit" && habit ? "Edit habit" : { habit: "Add a habit", task: "Add a family to-do", goal: "Set a SMART goal", tracker: "Build a tracker", reminder: "Add a reminder", idea: "Save an idea", date: "Add an important date", journal: "Write a small memory" }[kind];
   return <dialog className="entry-dialog" ref={dialogRef} onCancel={(event) => { event.preventDefault(); onClose(); }}>
-    <div className="dialog-heading"><div><h2>{title}</h2><p>{kind === "journal" ? "A few words are enough." : "Keep it easy to pick up later."}</p></div><button className="icon-button" onClick={onClose} aria-label="Close"><X size={19} /></button></div>
+    <div className="dialog-heading"><div><h2>{title}</h2><p>{kind === "goal" ? "Name the outcome, choose a target, and connect the actions that will count." : kind === "journal" ? "A few words are enough." : "Keep it easy to pick up later."}</p></div><button className="icon-button" onClick={onClose} aria-label="Close"><X size={19} /></button></div>
     <form onSubmit={submit} noValidate>
       {kind === "habit" && <>
         <Field label="Habit name" name="name" placeholder="For example, read 10 pages" defaultValue={habit?.name} required />
         <div className="form-grid"><Field label="Goal count" name="goal" type="number" min="1" max="1000" defaultValue={habit?.goal ?? 20} required /><Field label="Time, in minutes" name="minutes" type="number" min="1" max="600" placeholder="Optional" defaultValue={habit?.minutes} /></div>
         <label className="field"><span>Goal period</span><select className="input-control" name="cadence" defaultValue={habit?.cadence ?? "month"}><option value="week">Each week</option><option value="month">Each month</option></select></label>
         <label className="field"><span>Success criteria <em>What counts as done?</em></span><textarea className="input-control textarea-control" name="successCriteria" rows={3} placeholder="For example, read at least 10 pages before bed" defaultValue={habit?.successCriteria ?? ""} /></label>
+        {goals.length > 0 && <fieldset className="goal-link-list"><legend>Goals this habit supports</legend>{goals.map((goal) => <label key={goal.id}><input type="checkbox" name="goalIds" value={goal.id} defaultChecked={habit?.goalIds?.includes(goal.id)} /><span>{goal.title}</span></label>)}</fieldset>}
         <label className="habit-priority-toggle"><input type="checkbox" name="nonNegotiable" defaultChecked={habit?.nonNegotiable ?? false} /><span><strong>Non-negotiable</strong><small>Mark this as a habit you want to prioritize consistently.</small></span></label>
       </>}
       {kind === "task" && <>
@@ -843,18 +882,22 @@ function EntryDialog({ kind, habit, onClose, onSave }: { kind: Exclude<DialogKin
         <label className="field"><span>Category</span><select className="input-control" name="category" defaultValue=""><option value="">Choose a category (optional)</option>{taskCategories.map((category) => <option key={category} value={category}>{category}</option>)}</select></label>
         <div className="form-grid"><Field label="List" name="list" placeholder="Family" defaultValue="Family" /><Field label="Due date" name="dueDate" type="date" /></div>
         <Field label="For someone (optional)" name="assignee" placeholder="Name" />
+        {goals.length > 0 && <fieldset className="goal-link-list"><legend>Goals this to-do supports</legend>{goals.map((goal) => <label key={goal.id}><input type="checkbox" name="goalIds" value={goal.id} /><span>{goal.title}</span></label>)}</fieldset>}
       </>}
       {kind === "goal" && <>
-        <Field label="What do you want to work toward?" name="title" placeholder="Run 40 km by New Year" required />
-        <label className="field"><span>Why this matters <em>Optional</em></span><textarea className="input-control textarea-control" name="description" rows={2} placeholder="A little context for future you" /></label>
-        <div className="form-grid"><Field label="Start date" name="startDate" type="date" defaultValue={today} required /><Field label="End date" name="endDate" type="date" required /></div>
-        <div className="form-grid"><Field label="Target amount" name="target" type="number" min="0.01" defaultValue={10} required /><Field label="Unit" name="unit" placeholder="km, pages, sessions" required /></div>
+        <Field label="Specific outcome" name="title" placeholder="For example, complete 20 daily planning check-ins" defaultValue={initialGoal?.title} required />
+        <label className="field"><span>Why it matters <em>Relevant · Required</em></span><textarea className="input-control textarea-control" name="relevance" rows={2} placeholder="What would this change for you?" defaultValue={initialGoal?.relevance ?? ""} required /></label>
+        <label className="field"><span>Achievable plan <em>Realistic · Required</em></span><textarea className="input-control textarea-control" name="achievablePlan" rows={2} placeholder="For example, use a short daily planning habit and finish one priority to-do" defaultValue={initialGoal?.achievablePlan ?? ""} required /></label>
+        <div className="form-grid"><Field label="Start date · Time-bound" name="startDate" type="date" defaultValue={initialGoal?.startDate ?? today} required /><Field label="End date" name="endDate" type="date" defaultValue={initialGoal?.endDate} required /></div>
+        <div className="form-grid"><Field label="Measurable target" name="target" type="number" min="0.01" defaultValue={initialGoal?.target ?? 10} required /><Field label="Unit" name="unit" placeholder="to-dos, check-ins, km" defaultValue={initialGoal?.unit} required /></div>
+        <label className="field"><span>Specific context <em>Optional</em></span><textarea className="input-control textarea-control" name="description" rows={2} placeholder="Add a little context for future you" defaultValue={initialGoal?.description ?? ""} /></label>
+        {(habits.length > 0 || tasks.length > 0) && <fieldset className="goal-link-list"><legend>Choose actions that count toward this goal</legend>{habits.map((item) => <label key={item.id}><input type="checkbox" name="supportingHabitIds" value={item.id} /><span>Habit · {item.name}</span></label>)}{tasks.map((item) => <label key={item.id}><input type="checkbox" name="supportingTaskIds" value={item.id} /><span>To-do · {item.title}</span></label>)}<p className="goal-link-help">Each habit check-in and completed to-do adds 1 unit. For pages, kilometres, or other amounts, log the measured value directly.</p></fieldset>}
       </>}
       {kind === "tracker" && <>
         <Field label="What do you want to track?" name="name" placeholder="Side project sessions" required />
         <Field label="What is it for?" name="description" placeholder="A short description (optional)" />
-        <div className="form-grid"><Field label="Unit" name="unit" placeholder="sessions, pages, km" required /><Field label="Target (optional)" name="target" type="number" min="0.01" placeholder="10" /></div>
-        <div className="form-grid"><Field label="Start date (optional)" name="startDate" type="date" /><Field label="End date (optional)" name="endDate" type="date" /></div>
+        <div className="form-grid"><Field label="Unit" name="unit" placeholder="sessions, pages, km" required /><Field label="Measurable target" name="target" type="number" min="0.01" defaultValue={10} required /></div>
+        <div className="form-grid"><Field label="Start date" name="startDate" type="date" defaultValue={today} required /><Field label="End date" name="endDate" type="date" defaultValue={defaultTrackerEnd} required /></div>
       </>}
       {kind === "reminder" && <>
         <Field label="What should we remind you about?" name="title" placeholder="Dance class" required />

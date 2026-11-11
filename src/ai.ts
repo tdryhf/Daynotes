@@ -32,3 +32,29 @@ export async function askAssistant(messages: ChatMessage[], records: AppRecord[]
     raw: message,
   };
 }
+
+export type GoalCoachMessage = { role: "user" | "assistant"; content: string };
+export type GoalCoachReply = { reply: string; goal?: import("./types").GoalDraft };
+
+export async function askGoalCoach(messages: GoalCoachMessage[], records: AppRecord[]): Promise<GoalCoachReply> {
+  const current = new Date();
+  const localToday = `${current.getFullYear()}-${String(current.getMonth() + 1).padStart(2, "0")}-${String(current.getDate()).padStart(2, "0")}`;
+  const data = await postAi("/api/ai/goal-coach", { messages, records, localToday });
+  const goal = data.goal && typeof data.goal === "object" ? data.goal as Record<string, unknown> : undefined;
+  const validGoal = goal && typeof goal.title === "string" && typeof goal.description === "string" &&
+    typeof goal.startDate === "string" && typeof goal.endDate === "string" && typeof goal.target === "number" &&
+    typeof goal.unit === "string";
+  return {
+    reply: typeof data.reply === "string" ? data.reply : "Let’s shape this into a clear goal. What outcome would feel meaningful to you?",
+    ...(validGoal ? { goal: {
+      title: goal.title as string,
+      description: goal.description as string,
+      startDate: goal.startDate as string,
+      endDate: goal.endDate as string,
+      target: goal.target as number,
+      unit: goal.unit as string,
+      achievablePlan: typeof goal.achievablePlan === "string" ? goal.achievablePlan : undefined,
+      relevance: typeof goal.relevance === "string" ? goal.relevance : undefined,
+    } } : {}),
+  };
+}

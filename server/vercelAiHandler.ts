@@ -3,7 +3,7 @@ import { handleAiRequest } from "./ai";
 type Request = { method?: string; body?: unknown; headers: Record<string, string | string[] | undefined> };
 type Response = { setHeader(name: string, value: string): void; status(code: number): Response; json(value: unknown): void };
 
-export async function handleVercelAiRequest(request: Request, response: Response, mode: "refine" | "assistant") {
+export async function handleVercelAiRequest(request: Request, response: Response, mode: "refine" | "assistant" | "goal-coach") {
   response.setHeader("Cache-Control", "no-store");
   if (request.method !== "POST") return response.status(405).json({ error: "Method not allowed." });
   const forwarded = request.headers["x-forwarded-for"];

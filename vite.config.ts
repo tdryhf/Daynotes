@@ -63,7 +63,7 @@ function localAiApi(env: Record<string, string>) {
         if (!url.pathname.startsWith("/api/ai/")) return next();
         response.setHeader("Cache-Control", "no-store");
         if (request.method !== "POST") { response.writeHead(405, { "Content-Type": "application/json" }).end(JSON.stringify({ error: "Method not allowed." })); return; }
-        const mode = url.pathname.endsWith("/refine") ? "refine" : url.pathname.endsWith("/assistant") ? "assistant" : "unknown";
+        const mode = url.pathname.endsWith("/refine") ? "refine" : url.pathname.endsWith("/assistant") ? "assistant" : url.pathname.endsWith("/goal-coach") ? "goal-coach" : "unknown";
         const chunks: Buffer[] = [];
         let size = 0;
         request.on("data", (chunk: Buffer) => { size += chunk.length; if (size <= 1_000_000) chunks.push(chunk); });

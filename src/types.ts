@@ -11,6 +11,7 @@ export type Habit = BaseRecord & {
   minutes?: number;
   successCriteria?: string;
   nonNegotiable?: boolean;
+  goalIds?: string[];
 };
 export type CheckIn = BaseRecord & {
   type: "checkin";
@@ -26,6 +27,8 @@ export type Task = BaseRecord & {
   dueDate?: string;
   assignee?: string;
   completed: boolean;
+  completedAt?: string;
+  goalIds?: string[];
 };
 export type Idea = BaseRecord & {
   type: "idea";
@@ -65,7 +68,11 @@ export type Goal = BaseRecord & {
   endDate: string;
   target: number;
   unit: string;
+  achievablePlan?: string;
+  relevance?: string;
 };
+
+export type GoalDraft = Pick<Goal, "title" | "description" | "startDate" | "endDate" | "target" | "unit"> & Pick<Goal, "achievablePlan" | "relevance">;
 export type GoalProgress = BaseRecord & {
   type: "goalProgress";
   goalId: string;
