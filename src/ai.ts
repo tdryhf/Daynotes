@@ -3,6 +3,17 @@ import type { AppRecord } from "./types";
 export type RefinedNote = { polishedText: string; summary: string; keyIdeas: string[] };
 export type ChatMessage = { role: "user" | "assistant" | "tool"; content?: string | null; tool_call_id?: string; name?: string; tool_calls?: AssistantToolCall[] };
 export type AssistantToolCall = { id: string; type: "function"; function: { name: string; arguments: string } };
+export type PerformanceReview = { summary: string; wins: string[]; patterns: string[]; nextSteps: string[] };
+export type PerformanceReviewRequest = {
+  startDate: string;
+  endDate: string;
+  localToday: string;
+  metrics: { completionPercent: number; completedCount: number; plannedToDate: number; activeDays: number; elapsedDays: number; currentStreak: number; bestStreak: number };
+  habits: Array<{ id: string; name: string; goal: number; cadence: "week" | "month"; completed: number; percent: number }>;
+  checkins: Array<{ habitId: string; date: string }>;
+  notes: Array<{ date: string; habit: string; text: string }>;
+  reflections: Array<{ startDate: string; endDate: string; text: string }>;
+};
 
 async function postAi(path: string, body: Record<string, unknown>) {
   const response = await fetch(path, { method: "POST", headers: { "Content-Type": "application/json", Accept: "application/json" }, body: JSON.stringify(body) });
@@ -17,6 +28,15 @@ export async function refineNote(text: string, owner: string): Promise<RefinedNo
     polishedText: typeof data.polishedText === "string" ? data.polishedText : text,
     summary: typeof data.summary === "string" ? data.summary : "",
     keyIdeas: Array.isArray(data.keyIdeas) ? data.keyIdeas.filter((item): item is string => typeof item === "string") : [],
+  };
+}
+
+export async function analyzePerformance(request: PerformanceReviewRequest): Promise<PerformanceReview> {
+  const data = await postAi("/api/ai/performance", { performance: request });
+  const list = (value: unknown) => Array.isArray(value) ? value.filter((item): item is string => typeof item === "string").slice(0, 4) : [];
+  return {
+    summary: typeof data.summary === "string" ? data.summary : "Your review is ready.",
+    wins: list(data.wins), patterns: list(data.patterns), nextSteps: list(data.nextSteps),
   };
 }
 

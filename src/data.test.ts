@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { calculateRecentProgress, dateKey, mergeRecords, monthCheckinCount } from "./data";
+import { calculatePerformanceMetrics, calculateRecentProgress, dateKey, mergeRecords, monthCheckinCount } from "./data";
 import type { AppRecord } from "./types";
 
 describe("daybook record helpers", () => {
@@ -40,5 +40,34 @@ describe("daybook record helpers", () => {
     expect(progress.total).toBe(2);
     expect(progress.activeDays).toBe(1);
     expect(progress.targets.map(({ completed, percent }) => ({ completed, percent }))).toEqual([{ completed: 1, percent: 20 }, { completed: 1, percent: 10 }]);
+  });
+
+  it("keeps performance analytics inside the chosen dates and only plans through today", () => {
+    const habits = [
+      { id: "weekly", type: "habit" as const, name: "Read", goal: 7, cadence: "week" as const, updatedAt: 1 },
+      { id: "monthly", type: "habit" as const, name: "Walk", goal: 30, cadence: "month" as const, updatedAt: 1 },
+    ];
+    const records: AppRecord[] = [
+      ...Array.from({ length: 7 }, (_, index): AppRecord => ({ id: `weekly:${index}`, type: "checkin", habitId: "weekly", date: `2026-11-${String(index + 1).padStart(2, "0")}`, completed: true, updatedAt: index })),
+      ...[1, 2, 3].map((day): AppRecord => ({ id: `monthly:${day}`, type: "checkin", habitId: "monthly", date: `2026-11-${String(day).padStart(2, "0")}`, completed: true, updatedAt: day })),
+      { id: "future", type: "checkin", habitId: "weekly", date: "2026-11-10", completed: true, updatedAt: 19 },
+      { id: "outside", type: "checkin", habitId: "weekly", date: "2026-11-15", completed: true, updatedAt: 20 },
+      { id: "unchecked", type: "checkin", habitId: "monthly", date: "2026-11-04", completed: false, updatedAt: 21 },
+      { id: "deleted", type: "checkin", habitId: "monthly", date: "2026-11-05", completed: true, updatedAt: 22, deletedAt: 23 },
+    ];
+    const metrics = calculatePerformanceMetrics(records, habits, "2026-11-01", "2026-11-14", "2026-11-07");
+    expect(metrics).toMatchObject({ rangeDays: 14, elapsedDays: 7, completedCount: 10, plannedToDate: 14, completionPercent: 71, activeDays: 7, bestStreak: 7 });
+    expect(metrics.habits.map(({ id, completed, planned }) => ({ id, completed, planned }))).toEqual([
+      { id: "weekly", completed: 7, planned: 7 }, { id: "monthly", completed: 3, planned: 7 },
+    ]);
+    expect(metrics.weeks).toHaveLength(2);
+    expect(metrics.weeks[0]).toMatchObject({ completed: 10, planned: 14, percent: 71, isFuture: false });
+    expect(metrics.weeks[1]).toMatchObject({ completed: 0, isFuture: true });
+  });
+
+  it("returns an empty performance window when the dates are reversed", () => {
+    const metrics = calculatePerformanceMetrics([], [], "2026-12-01", "2026-11-01", "2026-11-11");
+    expect(metrics).toMatchObject({ rangeDays: 0, elapsedDays: 0, completedCount: 0, completionPercent: 0, activeDays: 0 });
+    expect(metrics.weeks).toHaveLength(0);
   });
 });

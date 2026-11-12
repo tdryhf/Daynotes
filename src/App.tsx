@@ -8,12 +8,14 @@ import {
 import { dateKey, isSampleData, liveRecords, loadLocalRecords, mergeRecords, monthCheckinCount, SAMPLE_KEY, saveLocalRecords, STORAGE_KEY } from "./data";
 import { cloudConfigured, readCloudRecords, writeCloudRecords, readPrivateJournal, writePrivateJournal } from "./sync";
 import { changePassword, createVault, openVault, resetPassword, sealContent, type JournalContent, type JournalEnvelope } from "./journalVault";
-import type { AppRecord, CustomTracker, FamilyDate, Goal, GoalDraft, Habit, Idea, JournalEntry, JournalNote, Task, TaskCategory, View } from "./types";
+import type { AppRecord, CustomTracker, FamilyDate, Goal, GoalDraft, Habit, Idea, JournalEntry, JournalNote, PerformanceReflection, Task, TaskCategory, View } from "./types";
 import { refineNote, type AssistantToolCall } from "./ai";
 import { AssistantDialog, ConsistencyVisualization, GoalCoachDialog, GoalsPage, HabitDetailsDialog, RemindersPage, TaskDetailsDialog, TaskTitleButton, TrackerDetailsDialog, TrackersPage } from "./features";
+import { InsightsPage } from "./insights";
 
 const navigation: { id: View; label: string; icon: typeof Home }[] = [
   { id: "today", label: "Today", icon: Home },
+  { id: "insights", label: "Insights", icon: TrendingUp },
   { id: "habits", label: "Habits", icon: Check },
   { id: "tasks", label: "To-dos", icon: ListChecks },
   { id: "goals", label: "Goals", icon: Target },
@@ -92,6 +94,7 @@ function App() {
   const [taskCategoryFilter, setTaskCategoryFilter] = useState("All categories");
   const [ideaFilter, setIdeaFilter] = useState("All ideas");
   const [toast, setToast] = useState("");
+  const [celebrateAllHabits, setCelebrateAllHabits] = useState(false);
   const [online, setOnline] = useState(navigator.onLine);
   const [installPrompt, setInstallPrompt] = useState<BeforeInstallPromptEvent | null>(null);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
@@ -110,6 +113,7 @@ function App() {
   const trackers = liveRecords(records, "tracker");
   const trackerEntries = liveRecords(records, "trackerEntry");
   const reminders = liveRecords(records, "reminder");
+  const reflections = liveRecords(records, "reflection");
   const completedToday = habits.filter((habit) => records.some((record) => record.type === "checkin" && record.habitId === habit.id && record.date === todayKey() && record.completed && !record.deletedAt)).length;
   const dueToday = tasks.filter((task) => !task.completed && task.dueDate === todayKey());
 
@@ -291,6 +295,7 @@ function App() {
     delete storedFields.supportingHabitIds;
     delete storedFields.supportingTaskIds;
     const record = { ...storedFields, id: recordId, type, updatedAt: now } as AppRecord;
+    if (type === "habit") setCelebrateAllHabits(false);
     if (type === "goal") {
       setRecords((current) => [...current.map((item) => {
         if (item.type === "habit" && supportingHabitIds.includes(item.id)) return { ...item, goalIds: [...new Set([...(item.goalIds ?? []), recordId])], updatedAt: now };
@@ -322,6 +327,7 @@ function App() {
   };
 
   const deleteHabit = (habit: Habit) => {
+    setCelebrateAllHabits(false);
     const deletedAt = Date.now();
     setRecords((current) => current.map((record) => record.id === habit.id || (record.type === "checkin" && record.habitId === habit.id) || (record.type === "note" && record.ownerType === "habit" && record.ownerId === habit.id) ? { ...record, deletedAt, updatedAt: deletedAt, sample: false } as AppRecord : record));
     setDetailHabit(null);
@@ -334,7 +340,19 @@ function App() {
     const record = found && found.type === "checkin"
       ? { ...found, completed: !found.completed, updatedAt: Date.now(), sample: false }
       : { id: `${habit.id}:${key}`, type: "checkin" as const, habitId: habit.id, date: key, completed: true, updatedAt: Date.now() };
+    if (key === todayKey() && !record.completed && completedToday === habits.length) setCelebrateAllHabits(false);
+    if (key === todayKey() && record.completed && completedToday + 1 >= habits.length && habits.length > 0) setCelebrateAllHabits(true);
     saveRecord(record);
+  };
+
+  const savePerformanceReflection = (startDate: string, endDate: string, text: string) => {
+    const existing = reflections.find((item) => item.startDate === startDate && item.endDate === endDate);
+    const now = Date.now();
+    const record: PerformanceReflection = existing
+      ? { ...existing, text, updatedAt: now, sample: false }
+      : { id: id(), type: "reflection", startDate, endDate, text, updatedAt: now };
+    saveRecord(record);
+    setToast(existing ? "Reflection updated." : "Reflection saved to your daybook.");
   };
 
   const toggleTask = (task: Task) => { const completed = !task.completed; saveRecord({ ...task, completed, completedAt: completed ? todayKey() : undefined, updatedAt: Date.now(), sample: false }); };
@@ -488,7 +506,7 @@ function App() {
   };
 
   const pageTitle: Record<View, string> = {
-    today: "Today", habits: "Habits", tasks: "Family to-dos", goals: "SMART goals", trackers: "Your trackers", ideas: "Idea shelf",
+    today: "Today", insights: "Habit insights", habits: "Habits", tasks: "Family to-dos", goals: "SMART goals", trackers: "Your trackers", ideas: "Idea shelf",
     dates: "Important dates", journal: "Private journal", reminders: "Reminders", settings: "Your daybook",
   };
 
@@ -541,7 +559,8 @@ function App() {
             </div>
           </div>
 
-          {view === "today" && <TodayPage habits={habits} records={records} tasks={dueToday} goals={goals} onToggle={toggleCheckin} onTimer={(habit) => { setTimerHabit(habit); setTimerSeconds((habit.minutes || 20) * 60); setTimerMinutes(habit.minutes || 20); setTimerRunning(false); }} onAdd={() => setDialog("habit")} onNavigate={chooseView} onHabitClick={setDetailHabit} completedToday={completedToday} />}
+          {view === "today" && <TodayPage habits={habits} records={records} tasks={dueToday} goals={goals} onToggle={toggleCheckin} onTimer={(habit) => { setTimerHabit(habit); setTimerSeconds((habit.minutes || 20) * 60); setTimerMinutes(habit.minutes || 20); setTimerRunning(false); }} onAdd={() => setDialog("habit")} onNavigate={chooseView} onHabitClick={setDetailHabit} completedToday={completedToday} celebrateAllHabits={celebrateAllHabits} />}
+          {view === "insights" && <InsightsPage records={records} habits={habits} notes={notes} reflections={reflections} onSaveReflection={savePerformanceReflection} onAddHabit={() => setDialog("habit")} />}
           {view === "habits" && <HabitsPage habits={habits} goals={goals} records={records} month={month} setMonth={setMonth} mode={matrixMode} setMode={setMatrixMode} onToggle={toggleCheckin} onAdd={() => setDialog("habit")} onRemove={deleteHabit} onHabitClick={setDetailHabit} />}
           {view === "tasks" && <TasksPage tasks={tasks} goals={goals} notes={notes} filter={taskFilter} setFilter={setTaskFilter} categoryFilter={taskCategoryFilter} setCategoryFilter={setTaskCategoryFilter} onToggle={toggleTask} onDelete={deleteTask} onAdd={() => setDialog("task")} onTaskClick={setDetailTask} />}
           {view === "goals" && <GoalsPage goals={goals} progress={goalProgress} notes={notes} habits={habits} tasks={tasks} records={records} onCoach={() => setGoalCoachOpen(true)} onLog={logGoalProgress} onSaveNote={(goal, text, date) => saveNote("goal", goal.id, goal.title, text, date)} onDelete={deleteGoal} />}
@@ -554,7 +573,7 @@ function App() {
         </main>
 
         <nav className="bottom-nav" aria-label="Main navigation">
-          {navigation.filter((item) => ["today", "habits", "tasks", "journal", "reminders"].includes(item.id)).map((item) => <NavItem key={item.id} item={item} active={view === item.id} onClick={() => chooseView(item.id)} compact />)}
+          {navigation.filter((item) => ["today", "insights", "habits", "journal", "reminders"].includes(item.id)).map((item) => <NavItem key={item.id} item={item} active={view === item.id} onClick={() => chooseView(item.id)} compact />)}
         </nav>
       </div>
 
@@ -586,7 +605,7 @@ function NavItem({ item, active, onClick, compact = false }: { item: { id: View;
 
 function pageSubtitle(view: View) {
   const subtitles: Record<View, string> = {
-    today: "A little check-in, then on with your day.", habits: "Keep your goals in view, one day at a time.",
+    today: "A little check-in, then on with your day.", insights: "Your habits, your dates, and the patterns that matter.", habits: "Keep your goals in view, one day at a time.",
     tasks: "The small things your family wants to get done.", goals: "Turn a clear outcome into small actions you can track.",
     trackers: "Make room for the things you want to measure your own way.", ideas: "A shelf for plans you want to come back to.",
     dates: "Birthdays, plans, and days worth keeping free.", journal: "An unhurried place for thoughts, one page at a time.",
@@ -596,8 +615,8 @@ function pageSubtitle(view: View) {
   return subtitles[view];
 }
 
-function TodayPage({ habits, records, tasks, goals, onToggle, onTimer, onAdd, onNavigate, onHabitClick, completedToday }: {
-  habits: Habit[]; records: AppRecord[]; tasks: Task[]; goals: Goal[]; onToggle: (habit: Habit, date: Date) => void; onTimer: (habit: Habit) => void; onAdd: () => void; onNavigate: (view: View) => void; onHabitClick: (habit: Habit) => void; completedToday: number;
+function TodayPage({ habits, records, tasks, goals, onToggle, onTimer, onAdd, onNavigate, onHabitClick, completedToday, celebrateAllHabits }: {
+  habits: Habit[]; records: AppRecord[]; tasks: Task[]; goals: Goal[]; onToggle: (habit: Habit, date: Date) => void; onTimer: (habit: Habit) => void; onAdd: () => void; onNavigate: (view: View) => void; onHabitClick: (habit: Habit) => void; completedToday: number; celebrateAllHabits: boolean;
 }) {
   const today = new Date();
   const todayCheck = (habitId: string) => records.some((record) => record.type === "checkin" && record.habitId === habitId && record.date === todayKey() && record.completed && !record.deletedAt);
@@ -621,6 +640,7 @@ function TodayPage({ habits, records, tasks, goals, onToggle, onTimer, onAdd, on
         })}
         {habits.length > 8 && <button className="text-link more-link" onClick={() => onNavigate("habits")}>See all {habits.length} habits <ChevronRight size={15} /></button>}
       </div>
+      {habits.length > 0 && completedToday === habits.length && <div className={`all-habits-badge ${celebrateAllHabits ? "is-celebrating" : ""}`} role="status" aria-live="polite"><span className="all-habits-medal"><Sparkles size={19} /></span><span><strong>All habits complete!</strong><small>That’s a full day of showing up. Let it count.</small></span><span className="badge-sparkle badge-sparkle-one" aria-hidden="true">✦</span><span className="badge-sparkle badge-sparkle-two" aria-hidden="true">✦</span></div>}
       <div className="sheet-footer"><span>One day at a time is plenty.</span><button className="text-link" onClick={() => onNavigate("habits")}>Open the habit calendar <ChevronRight size={15} /></button></div>
     </section>
     <aside className="today-aside">

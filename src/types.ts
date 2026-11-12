@@ -1,4 +1,4 @@
-export type View = "today" | "habits" | "tasks" | "goals" | "trackers" | "ideas" | "dates" | "journal" | "reminders" | "settings";
+export type View = "today" | "insights" | "habits" | "tasks" | "goals" | "trackers" | "ideas" | "dates" | "journal" | "reminders" | "settings";
 export type Cadence = "week" | "month";
 export type TaskCategory = "Homework" | "Extracurriculars" | "Physical development";
 
@@ -60,6 +60,12 @@ export type JournalNote = BaseRecord & {
   summary?: string;
   keyIdeas?: string[];
 };
+export type PerformanceReflection = BaseRecord & {
+  type: "reflection";
+  startDate: string;
+  endDate: string;
+  text: string;
+};
 export type Goal = BaseRecord & {
   type: "goal";
   title: string;
@@ -106,6 +112,6 @@ export type Reminder = BaseRecord & {
   notifiedAt?: number;
   lastNotifiedAt?: number;
 };
-export type AppRecord = Habit | CheckIn | Task | Idea | FamilyDate | JournalEntry | JournalNote | Goal | GoalProgress | CustomTracker | TrackerEntry | Reminder;
+export type AppRecord = Habit | CheckIn | Task | Idea | FamilyDate | JournalEntry | JournalNote | PerformanceReflection | Goal | GoalProgress | CustomTracker | TrackerEntry | Reminder;
 
 export type Draft = Omit<Habit, keyof BaseRecord | "type"> | Omit<CheckIn, keyof BaseRecord | "type"> | Omit<Task, keyof BaseRecord | "type"> | Omit<Idea, keyof BaseRecord | "type"> | Omit<FamilyDate, keyof BaseRecord | "type"> | Omit<JournalEntry, keyof BaseRecord | "type">;

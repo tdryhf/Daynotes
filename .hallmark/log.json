@@ -1,0 +1,27 @@
+[
+ {
+  "mode": "build",
+  "scope": "app",
+  "theme": "Hum",
+  "date": "2026-11-11",
+  "axes": "light/rounded-sans/chromatic-yellow",
+  "shape": "daily ledger with family rail and a compact phone dock",
+  "hero": "the check-in is the first useful surface",
+  "nav": "family rail on desktop, labeled bottom dock on phone",
+  "footer": "ledger actions remain beside the daily list",
+  "imagery": "none; printed paper texture comes from CSS",
+  "entry": "Today check-in and date-led history",
+  "fingerprint": "paper grain, card stock and pear-yellow controls",
+  "sections": [
+   "habits",
+   "family tasks",
+   "ideas",
+   "dates",
+   "journal",
+   "settings"
+  ],
+  "signature": "workbook-style habit matrix carried into an open family daybook",
+  "waived": [],
+  "prompt": "Build a cross-device shared family habit tracker based on the supplied Excel workbook, with tasks, ideas, dates, a journal, and a human-made paper feel."
+ }
+]

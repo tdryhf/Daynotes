@@ -157,6 +157,100 @@ export function calculateConsistencyGrid(records: AppRecord[], habits: Habit[], 
   return { cells, eligibleDays: eligibleDays.length, completedCount, possibleCount, percent: possibleCount ? Math.round((completedCount / possibleCount) * 100) : 0, activeDays: eligibleDays.filter((cell) => cell.completed > 0).length, currentStreak, habitConsistency, weekly };
 }
 
+export type PerformanceMetrics = {
+  startDate: string;
+  endDate: string;
+  rangeDays: number;
+  elapsedDays: number;
+  completedCount: number;
+  plannedToDate: number;
+  plannedInRange: number;
+  completionPercent: number;
+  activeDays: number;
+  activeDayPercent: number;
+  averagePerDay: number;
+  currentStreak: number;
+  bestStreak: number;
+  habits: Array<{ id: string; name: string; goal: number; cadence: Habit["cadence"]; completed: number; planned: number; percent: number }>;
+  weeks: Array<{ startDate: string; endDate: string; label: string; completed: number; planned: number; percent: number; isFuture: boolean }>;
+};
+
+function inclusiveDays(start: string, end: string) {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(start) || !/^\d{4}-\d{2}-\d{2}$/.test(end) || end < start) return 0;
+  return Math.floor((parseDateKey(end).getTime() - parseDateKey(start).getTime()) / 86_400_000) + 1;
+}
+
+function plannedHabitCount(habit: Habit, start: string, end: string) {
+  if (!inclusiveDays(start, end)) return 0;
+  if (habit.cadence === "week") return Math.max(0, habit.goal) * inclusiveDays(start, end) / 7;
+  let planned = 0;
+  let cursor = parseDateKey(start);
+  const through = parseDateKey(end);
+  while (cursor <= through) {
+    const monthEnd = new Date(cursor.getFullYear(), cursor.getMonth() + 1, 0, 12);
+    const segmentEnd = monthEnd < through ? monthEnd : through;
+    const daysInMonth = monthEnd.getDate();
+    planned += Math.max(0, habit.goal) * (Math.floor((segmentEnd.getTime() - cursor.getTime()) / 86_400_000) + 1) / daysInMonth;
+    cursor = new Date(segmentEnd.getFullYear(), segmentEnd.getMonth(), segmentEnd.getDate() + 1, 12);
+  }
+  return planned;
+}
+
+export function calculatePerformanceMetrics(records: AppRecord[], habits: Habit[], startDate: string, endDate: string, throughDate = dateKey(new Date())): PerformanceMetrics {
+  const rangeDays = inclusiveDays(startDate, endDate);
+  const validRange = rangeDays > 0;
+  const actualEnd = validRange && endDate < throughDate ? endDate : throughDate;
+  const elapsedDays = validRange && actualEnd >= startDate ? inclusiveDays(startDate, actualEnd) : 0;
+  const habitIds = new Set(habits.map((habit) => habit.id));
+  const checkins = records.filter((record): record is CheckIn => record.type === "checkin" && record.completed && !record.deletedAt && habitIds.has(record.habitId) && validRange && record.date >= startDate && record.date <= actualEnd);
+  const uniqueCheckins = [...new Map(checkins.map((item) => [`${item.habitId}:${item.date}`, item])).values()];
+  const countFor = (habit: Habit, from: string, to: string) => uniqueCheckins.filter((item) => item.habitId === habit.id && item.date >= from && item.date <= to).length;
+  const habitMetrics = habits.map((habit) => {
+    const completed = countFor(habit, startDate, endDate);
+    const planned = validRange && elapsedDays ? plannedHabitCount(habit, startDate, actualEnd) : 0;
+    return { id: habit.id, name: habit.name, goal: habit.goal, cadence: habit.cadence, completed, planned, percent: planned ? Math.round(completed / planned * 100) : 0 };
+  }).sort((a, b) => b.percent - a.percent || b.completed - a.completed || a.name.localeCompare(b.name));
+  const plannedToDate = validRange && elapsedDays ? habits.reduce((sum, habit) => sum + plannedHabitCount(habit, startDate, actualEnd), 0) : 0;
+  const completedCount = uniqueCheckins.length;
+  const activeDates = new Set(uniqueCheckins.filter((item) => item.date <= actualEnd).map((item) => item.date));
+  const hasActivity = (date: string) => activeDates.has(date);
+  let currentStreak = 0;
+  if (validRange && elapsedDays) {
+    let cursor = parseDateKey(actualEnd);
+    if (!hasActivity(actualEnd)) cursor.setDate(cursor.getDate() - 1);
+    while (dateKey(cursor) >= startDate && hasActivity(dateKey(cursor))) { currentStreak += 1; cursor.setDate(cursor.getDate() - 1); }
+  }
+  let bestStreak = 0, streak = 0;
+  if (validRange && elapsedDays) {
+    const cursor = parseDateKey(startDate);
+    while (dateKey(cursor) <= actualEnd) {
+      streak = hasActivity(dateKey(cursor)) ? streak + 1 : 0;
+      bestStreak = Math.max(bestStreak, streak);
+      cursor.setDate(cursor.getDate() + 1);
+    }
+  }
+  const weeks = Array.from({ length: validRange ? Math.ceil(rangeDays / 7) : 0 }, (_, index) => {
+    const from = parseDateKey(startDate);
+    from.setDate(from.getDate() + index * 7);
+    const to = parseDateKey(startDate);
+    to.setDate(to.getDate() + Math.min(rangeDays - 1, index * 7 + 6));
+    const weekStart = dateKey(from), weekEnd = dateKey(to);
+    const elapsedEndForWeek = weekStart > throughDate ? weekStart : weekEnd < throughDate ? weekEnd : throughDate;
+    const elapsedStartForWeek = weekStart;
+    const plannedDays = elapsedEndForWeek >= elapsedStartForWeek ? habits.reduce((sum, habit) => sum + plannedHabitCount(habit, elapsedStartForWeek, elapsedEndForWeek), 0) : 0;
+    const completed = uniqueCheckins.filter((item) => item.date >= weekStart && item.date <= weekEnd).length;
+    return { startDate: weekStart, endDate: weekEnd, label: from.toLocaleDateString(undefined, { month: "short", day: "numeric" }), completed, planned: plannedDays, percent: plannedDays ? Math.round(completed / plannedDays * 100) : 0, isFuture: weekStart > throughDate };
+  });
+  const plannedInRange = validRange ? habits.reduce((sum, habit) => sum + plannedHabitCount(habit, startDate, endDate), 0) : 0;
+  return {
+    startDate, endDate, rangeDays, elapsedDays, completedCount,
+    plannedToDate, plannedInRange, completionPercent: plannedToDate ? Math.min(100, Math.round(completedCount / plannedToDate * 100)) : 0,
+    activeDays: activeDates.size, activeDayPercent: elapsedDays ? Math.round(activeDates.size / elapsedDays * 100) : 0,
+    averagePerDay: elapsedDays ? completedCount / elapsedDays : 0, currentStreak, bestStreak,
+    habits: habitMetrics, weeks,
+  };
+}
+
 function parseDateKey(value: string) {
   const [year, month, day] = value.split("-").map(Number);
   return new Date(year, month - 1, day, 12);
