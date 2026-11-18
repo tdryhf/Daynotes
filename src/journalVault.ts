@@ -28,7 +28,8 @@ async function decryptBytes(key: CryptoKey, iv: string, ciphertext: string) {
   return new Uint8Array(await crypto.subtle.decrypt({ name: "AES-GCM", iv: new Uint8Array(from64(iv)) }, key, new Uint8Array(from64(ciphertext))));
 }
 const exportKey = (key: CryptoKey) => crypto.subtle.exportKey("raw", key);
-const importDataKey = (raw: ArrayBuffer) => crypto.subtle.importKey("raw", raw, { name: "AES-GCM" }, false, ["encrypt", "decrypt"]);
+// Extractable because the data key must be exported to be re-wrapped under the passphrase and recovery keys.
+const importDataKey = (raw: ArrayBuffer) => crypto.subtle.importKey("raw", raw, { name: "AES-GCM" }, true, ["encrypt", "decrypt"]);
 
 export const emptyJournal = (): JournalContent => ({ pages: [{ id: crypto.randomUUID(), text: "", updatedAt: Date.now() }], photos: [], stickyNote: "" });
 
