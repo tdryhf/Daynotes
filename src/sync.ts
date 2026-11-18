@@ -29,6 +29,9 @@ export async function writeCloudRecords(records: AppRecord[]) {
   if (error) throw error;
 }
 
+const journalNotConfigured = "Journal storage isn’t set up on this site. Add VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY to the hosting environment and redeploy.";
+const isJson = (response: Response) => (response.headers.get("content-type") ?? "").includes("application/json");
+
 export async function readPrivateJournal(): Promise<JournalEnvelope | null> {
   if (client) {
     const { data, error } = await client.from("private_journal").select("envelope").eq("id", "shared").maybeSingle();
@@ -38,6 +41,7 @@ export async function readPrivateJournal(): Promise<JournalEnvelope | null> {
   const response = await fetch("/api/private-journal", { headers: { Accept: "application/json" } });
   if (response.status === 404) return null;
   if (!response.ok) throw new Error("Could not reach the private journal on this device’s local server.");
+  if (!isJson(response)) throw new Error(journalNotConfigured);
   const data = await response.json() as { envelope?: JournalEnvelope };
   return data.envelope ?? null;
 }
@@ -53,5 +57,5 @@ export async function writePrivateJournal(envelope: JournalEnvelope) {
     return;
   }
   const response = await fetch("/api/private-journal", { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ envelope }) });
-  if (!response.ok) throw new Error("The local journal server could not save this page.");
+  if (response.status !== 204) throw new Error(response.ok ? journalNotConfigured : "The local journal server could not save this page.");
 }
