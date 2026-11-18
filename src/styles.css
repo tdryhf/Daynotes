@@ -320,7 +320,8 @@ button:not(:disabled):active { translate: 0 1px; }
 .password-change > div { display: grid; flex: 1; gap: var(--space-2xs); }
 .password-change > div strong { font-size: .82rem; }
 .password-change > div span { color: var(--color-muted); font-size: .73rem; }
-.password-change input { max-width: 240px; min-height: 42px; }
+.password-change .password-input { flex: 0 1 240px; }
+.password-change input { min-height: 42px; }
 .password-change .soft-button { min-height: 42px; }
 .journal-flash { margin: 0; color: var(--color-mint-deep); font-size: .78rem; }
 .journal-flash.has-error { color: var(--color-error); }
@@ -381,6 +382,11 @@ button:not(:disabled):active { translate: 0 1px; }
 .field em { color: var(--color-muted); font-size: .7rem; font-style: normal; }
 .input-control { width: 100%; min-width: 0; min-height: 47px; padding: var(--space-xs) var(--space-sm); border: 1px solid var(--color-muted); border-radius: var(--radius-input); outline: 2px solid transparent; outline-offset: -3px; background: var(--color-paper); color: var(--color-ink); font-size: .85rem; }
 .input-control:hover { background: var(--color-paper-2); }
+.password-input { position: relative; display: block; width: 100%; }
+.password-input .input-control { padding-right: 48px; }
+.password-toggle { position: absolute; top: 50%; right: 4px; display: grid; place-items: center; width: 40px; height: 40px; padding: 0; border: 0; border-radius: var(--radius-input); background: transparent; color: var(--color-muted); cursor: pointer; transform: translateY(-50%); }
+.password-toggle:hover { color: var(--color-ink); background: var(--color-paper-2); }
+.password-toggle:focus-visible { outline: 2px solid var(--color-ink); outline-offset: -2px; }
 .input-control::placeholder { color: var(--color-muted); opacity: 1; }
 .textarea-control { min-height: 90px; resize: vertical; }
 .journal-textarea { min-height: 130px; }
@@ -491,7 +497,7 @@ button:not(:disabled):active { translate: 0 1px; }
   .recovery-card { align-items: start; flex-wrap: wrap; }
   .recovery-card > div { min-width: calc(100% - 50px); }
   .password-change { align-items: stretch; }
-  .password-change input { max-width: none; }
+  .password-change .password-input { flex-basis: auto; }
   .entry-meta { align-items: start; flex-direction: column; gap: var(--space-2xs); }
   .settings-sheet { padding: var(--space-md) var(--space-md); }
   .settings-heading { gap: var(--space-sm); }
