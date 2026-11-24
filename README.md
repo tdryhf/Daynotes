@@ -34,6 +34,8 @@ Journal photos are resized and converted to JPEG in the browser (which also drop
 
 The Vercel project deploys automatically from the `main` branch of the GitHub repository. `vercel.json` sets the Vite build command, the `dist` output, and the client-side route fallback. The Supabase connection is built in (see above), so no Vercel variables are needed for sync.
 
+Supabase pauses free-plan projects after about a week without activity. To prevent that, `vercel.json` schedules a daily Vercel cron that calls `/api/keepalive` (`server/keepalive.ts`), which reads one row id with the public key. You can see each run under **Project → Settings → Cron Jobs** in Vercel. Optionally set a `CRON_SECRET` environment variable in Vercel so the endpoint answers only Vercel's own cron calls.
+
 To enable the AI features, add `GROQ_API_KEY` under **Project Settings → Environment Variables** in Vercel (Production and Preview), then redeploy. Without it the `/api/ai/*` endpoints answer "AI is not configured" and the rest of the app works normally.
 
 ## Install on a device
