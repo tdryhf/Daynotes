@@ -28,21 +28,31 @@ export function checkAiRateLimit(clientKey: string) {
   return current.count <= 30;
 }
 
+// JSON mode now and then fails to produce valid JSON ("json_validate_failed"); the same request usually works when sent again.
+const JSON_ATTEMPTS = 3;
+
 async function completion(apiKey: string, messages: AiMessage[], useTools = false) {
-  const response = await fetch("https://api.groq.com/openai/v1/chat/completions", {
-    method: "POST",
-    headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
-    body: JSON.stringify({
-      model: MODEL,
-      messages,
-      ...(useTools ? { tools, tool_choice: "auto", parallel_tool_calls: false, max_tokens: 1200 } : { response_format: { type: "json_object" }, max_tokens: 900, temperature: 0.25 }),
-    }),
-  });
-  const payload = await response.json().catch(() => ({})) as { choices?: Array<{ message?: Record<string, unknown> }>; error?: { message?: string } };
-  if (!response.ok) throw new Error(payload.error?.message || `Groq returned ${response.status}.`);
-  const message = payload.choices?.[0]?.message;
-  if (!message) throw new Error("Groq returned an empty response.");
-  return message;
+  for (let attempt = 1; ; attempt += 1) {
+    const response = await fetch("https://api.groq.com/openai/v1/chat/completions", {
+      method: "POST",
+      headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
+      body: JSON.stringify({
+        model: MODEL,
+        messages,
+        ...(useTools ? { tools, tool_choice: "auto", parallel_tool_calls: false, max_tokens: 1200 } : { response_format: { type: "json_object" }, max_tokens: 900, temperature: 0.25 }),
+      }),
+    });
+    const payload = await response.json().catch(() => ({})) as { choices?: Array<{ message?: Record<string, unknown> }>; error?: { message?: string; code?: string } };
+    const invalidJson = payload.error?.code === "json_validate_failed" || /^Failed to (generate|validate) JSON/.test(payload.error?.message ?? "");
+    if (!response.ok && !useTools && invalidJson) {
+      if (attempt < JSON_ATTEMPTS) continue;
+      throw new Error("The AI couldn't put a reply together. Please try again.");
+    }
+    if (!response.ok) throw new Error(payload.error?.message || `Groq returned ${response.status}.`);
+    const message = payload.choices?.[0]?.message;
+    if (!message) throw new Error("Groq returned an empty response.");
+    return message;
+  }
 }
 
 export async function handleAiRequest(body: AiBody, apiKey: string | undefined, clientKey: string): Promise<AiResult> {
