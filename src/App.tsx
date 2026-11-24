@@ -10,6 +10,7 @@ import { sameRecords, useCloudSync, type SyncState } from "./useCloudSync";
 import { JournalPage } from "./journal";
 import type { AppRecord, CustomTracker, FamilyDate, Goal, GoalDraft, Habit, Idea, JournalNote, PerformanceReflection, Task, TaskCategory, View } from "./types";
 import { refineNote, type AssistantToolCall } from "./ai";
+import { editTime } from "./clock";
 import { AssistantDialog, ConsistencyVisualization, GoalCoachDialog, GoalsPage, HabitDetailsDialog, RemindersPage, TaskDetailsDialog, TaskTitleButton, TrackerDetailsDialog, TrackersPage } from "./features";
 import { InsightsPage } from "./insights";
 
@@ -180,7 +181,7 @@ function App() {
             if (registration?.showNotification) await registration.showNotification(reminder.title, { body: reminder.details || "A reminder from Daybook.", icon: "/icon.svg", tag: reminder.id });
             else new Notification(reminder.title, { body: reminder.details || "A reminder from Daybook.", tag: reminder.id });
           } catch { setToast(`Reminder: ${reminder.title}`); }
-          const deliveredAt = Date.now();
+          const deliveredAt = editTime();
           if (reminder.repeat === "weekly") {
             const next = new Date(reminder.scheduledAt);
             next.setDate(next.getDate() + 7);
@@ -222,14 +223,14 @@ function App() {
     let refined: Awaited<ReturnType<typeof refineNote>> | undefined;
     try { refined = await refineNote(rawText, `${ownerType}: ${ownerName}`); }
     catch { /* Keep the hurried original if AI is not configured or unreachable. */ }
-    const note: JournalNote = { id: id(), type: "note", ownerType, ownerId, sessionDate, rawText, polishedText: refined?.polishedText, summary: refined?.summary, keyIdeas: refined?.keyIdeas, updatedAt: Date.now() };
+    const note: JournalNote = { id: id(), type: "note", ownerType, ownerId, sessionDate, rawText, polishedText: refined?.polishedText, summary: refined?.summary, keyIdeas: refined?.keyIdeas, updatedAt: editTime() };
     saveRecord(note);
     setToast(refined ? "Note polished and saved." : "Note saved. Add GROQ_API_KEY to enable AI polishing.");
   };
 
   const addRecord = (type: Exclude<DialogKind, null>, fields: Record<string, unknown>) => {
     const recordId = id();
-    const now = Date.now();
+    const now = editTime();
     const supportingHabitIds = type === "goal" && Array.isArray(fields.supportingHabitIds) ? fields.supportingHabitIds as string[] : [];
     const supportingTaskIds = type === "goal" && Array.isArray(fields.supportingTaskIds) ? fields.supportingTaskIds as string[] : [];
     const storedFields = { ...fields };
@@ -251,7 +252,7 @@ function App() {
 
   const saveHabit = (fields: Record<string, unknown>) => {
     if (editingHabit) {
-      saveRecord({ ...editingHabit, ...fields, updatedAt: Date.now(), sample: false } as Habit);
+      saveRecord({ ...editingHabit, ...fields, updatedAt: editTime(), sample: false } as Habit);
       setEditingHabit(null);
       setDialog(null);
       setDetailHabit(null);
@@ -269,7 +270,7 @@ function App() {
 
   const deleteHabit = (habit: Habit) => {
     setCelebrateAllHabits(false);
-    const deletedAt = Date.now();
+    const deletedAt = editTime();
     setRecords((current) => current.map((record) => record.id === habit.id || (record.type === "checkin" && record.habitId === habit.id) || (record.type === "note" && record.ownerType === "habit" && record.ownerId === habit.id) ? { ...record, deletedAt, updatedAt: deletedAt, sample: false } as AppRecord : record));
     setDetailHabit(null);
     setToast("Habit deleted.");
@@ -279,8 +280,8 @@ function App() {
     const key = dateKey(date);
     const found = records.find((record) => record.type === "checkin" && record.habitId === habit.id && record.date === key && !record.deletedAt);
     const record = found && found.type === "checkin"
-      ? { ...found, completed: !found.completed, updatedAt: Date.now(), sample: false }
-      : { id: `${habit.id}:${key}`, type: "checkin" as const, habitId: habit.id, date: key, completed: true, updatedAt: Date.now() };
+      ? { ...found, completed: !found.completed, updatedAt: editTime(), sample: false }
+      : { id: `${habit.id}:${key}`, type: "checkin" as const, habitId: habit.id, date: key, completed: true, updatedAt: editTime() };
     if (key === todayKey() && !record.completed && completedToday === habits.length) setCelebrateAllHabits(false);
     if (key === todayKey() && record.completed && completedToday + 1 >= habits.length && habits.length > 0) setCelebrateAllHabits(true);
     saveRecord(record);
@@ -288,7 +289,7 @@ function App() {
 
   const savePerformanceReflection = (startDate: string, endDate: string, text: string) => {
     const existing = reflections.find((item) => item.startDate === startDate && item.endDate === endDate);
-    const now = Date.now();
+    const now = editTime();
     const record: PerformanceReflection = existing
       ? { ...existing, text, updatedAt: now, sample: false }
       : { id: id(), type: "reflection", startDate, endDate, text, updatedAt: now };
@@ -296,20 +297,20 @@ function App() {
     setToast(existing ? "Reflection updated." : "Reflection saved to your daybook.");
   };
 
-  const toggleTask = (task: Task) => { const completed = !task.completed; saveRecord({ ...task, completed, completedAt: completed ? todayKey() : undefined, updatedAt: Date.now(), sample: false }); };
-  const logGoalProgress = (goal: Goal, amount: number, date: string, note?: string) => saveRecord({ id: id(), type: "goalProgress", goalId: goal.id, amount, date, note: note || undefined, updatedAt: Date.now() });
-  const logTrackerEntry = (tracker: CustomTracker, value: number, date: string, note?: string) => saveRecord({ id: id(), type: "trackerEntry", trackerId: tracker.id, value, date, note: note || undefined, updatedAt: Date.now() });
+  const toggleTask = (task: Task) => { const completed = !task.completed; saveRecord({ ...task, completed, completedAt: completed ? todayKey() : undefined, updatedAt: editTime(), sample: false }); };
+  const logGoalProgress = (goal: Goal, amount: number, date: string, note?: string) => saveRecord({ id: id(), type: "goalProgress", goalId: goal.id, amount, date, note: note || undefined, updatedAt: editTime() });
+  const logTrackerEntry = (tracker: CustomTracker, value: number, date: string, note?: string) => saveRecord({ id: id(), type: "trackerEntry", trackerId: tracker.id, value, date, note: note || undefined, updatedAt: editTime() });
   const deleteTask = (task: Task) => {
-    const deletedAt = Date.now();
+    const deletedAt = editTime();
     setRecords((current) => current.map((record) => record.id === task.id || (record.type === "note" && record.ownerType === "task" && record.ownerId === task.id) ? { ...record, deletedAt, updatedAt: deletedAt, sample: false } as AppRecord : record));
     if (detailTask?.id === task.id) setDetailTask(null);
   };
   const deleteGoal = (goal: Goal) => {
-    const deletedAt = Date.now();
+    const deletedAt = editTime();
     setRecords((current) => current.map((record) => record.id === goal.id || (record.type === "goalProgress" && record.goalId === goal.id) || (record.type === "note" && record.ownerType === "goal" && record.ownerId === goal.id) ? { ...record, deletedAt, updatedAt: deletedAt } as AppRecord : record));
   };
   const deleteTracker = (tracker: CustomTracker) => {
-    const deletedAt = Date.now();
+    const deletedAt = editTime();
     setRecords((current) => current.map((record) => record.id === tracker.id || (record.type === "trackerEntry" && record.trackerId === tracker.id) || (record.type === "note" && record.ownerType === "tracker" && record.ownerId === tracker.id) ? { ...record, deletedAt, updatedAt: deletedAt } as AppRecord : record));
   };
   const requestNotifications = async () => {
@@ -326,7 +327,7 @@ function App() {
     const textArg = (key: string, fallback = "") => typeof args[key] === "string" ? String(args[key]).trim() : fallback;
     const numArg = (key: string, fallback = 0) => typeof args[key] === "number" ? Number(args[key]) : fallback;
     const created = (type: AppRecord["type"], fields: Record<string, unknown>) => {
-      const record = { ...fields, id: id(), type, updatedAt: Date.now() } as AppRecord;
+      const record = { ...fields, id: id(), type, updatedAt: editTime() } as AppRecord;
       saveRecord(record);
       return record;
     };
@@ -349,7 +350,7 @@ function App() {
         const taskName = textArg("taskName"), dueDate = textArg("dueDate");
         const task = tasks.find((item) => item.title.toLowerCase() === taskName.toLowerCase());
         if (!task || !/^\d{4}-\d{2}-\d{2}$/.test(dueDate)) return { ok: false, message: "Could not find that task or the deadline was not a valid date." };
-        saveRecord({ ...task, dueDate, updatedAt: Date.now(), sample: false });
+        saveRecord({ ...task, dueDate, updatedAt: editTime(), sample: false });
         return { ok: true, action: "task_deadline_set", title: task.title, dueDate };
       }
       case "check_in_habit": {
@@ -357,7 +358,7 @@ function App() {
         const habit = habits.find((item) => item.name.toLowerCase() === habitName.toLowerCase());
         if (!habit || !/^\d{4}-\d{2}-\d{2}$/.test(date)) return { ok: false, message: "Could not find that habit or the date was not valid." };
         const found = records.find((record) => record.type === "checkin" && record.habitId === habit.id && record.date === date && !record.deletedAt);
-        if (!found || (found.type === "checkin" && !found.completed)) saveRecord(found && found.type === "checkin" ? { ...found, completed: true, updatedAt: Date.now(), sample: false } : { id: `${habit.id}:${date}`, type: "checkin", habitId: habit.id, date, completed: true, updatedAt: Date.now() });
+        if (!found || (found.type === "checkin" && !found.completed)) saveRecord(found && found.type === "checkin" ? { ...found, completed: true, updatedAt: editTime(), sample: false } : { id: `${habit.id}:${date}`, type: "checkin", habitId: habit.id, date, completed: true, updatedAt: editTime() });
         return { ok: true, action: "habit_checked_in", habitName: habit.name, date };
       }
       case "create_goal": {
@@ -407,7 +408,7 @@ function App() {
     }
   };
   const removeSampleData = () => {
-    setRecords((current) => current.map((record) => record.sample ? { ...record, deletedAt: Date.now(), updatedAt: Date.now() } as AppRecord : record));
+    setRecords((current) => current.map((record) => record.sample ? { ...record, deletedAt: editTime(), updatedAt: editTime() } as AppRecord : record));
     setToast("Sample entries cleared. Your own records are still here.");
   };
 
@@ -504,10 +505,10 @@ function App() {
           {view === "tasks" && <TasksPage tasks={tasks} goals={goals} notes={notes} filter={taskFilter} setFilter={setTaskFilter} categoryFilter={taskCategoryFilter} setCategoryFilter={setTaskCategoryFilter} onToggle={toggleTask} onDelete={deleteTask} onAdd={() => setDialog("task")} onTaskClick={setDetailTask} />}
           {view === "goals" && <GoalsPage goals={goals} progress={goalProgress} notes={notes} habits={habits} tasks={tasks} records={records} onCoach={() => setGoalCoachOpen(true)} onLog={logGoalProgress} onSaveNote={(goal, text, date) => saveNote("goal", goal.id, goal.title, text, date)} onDelete={deleteGoal} />}
           {view === "trackers" && <TrackersPage trackers={trackers} entries={trackerEntries} notes={notes} onAdd={() => setDialog("tracker")} onLog={logTrackerEntry} onSaveNote={(tracker, text, date) => saveNote("tracker", tracker.id, tracker.name, text, date)} onDelete={deleteTracker} onSelect={setDetailTracker} />}
-          {view === "ideas" && <IdeasPage ideas={ideas} filter={ideaFilter} setFilter={setIdeaFilter} onDelete={(idea) => saveRecord({ ...idea, deletedAt: Date.now(), updatedAt: Date.now() })} onAdd={() => setDialog("idea")} />}
-          {view === "dates" && <DatesPage dates={dates} onDelete={(event) => saveRecord({ ...event, deletedAt: Date.now(), updatedAt: Date.now() })} onAdd={() => setDialog("date")} />}
+          {view === "ideas" && <IdeasPage ideas={ideas} filter={ideaFilter} setFilter={setIdeaFilter} onDelete={(idea) => saveRecord({ ...idea, deletedAt: editTime(), updatedAt: editTime() })} onAdd={() => setDialog("idea")} />}
+          {view === "dates" && <DatesPage dates={dates} onDelete={(event) => saveRecord({ ...event, deletedAt: editTime(), updatedAt: editTime() })} onAdd={() => setDialog("date")} />}
           {journalOpened && <div hidden={view !== "journal"}><JournalPage active={view === "journal"} legacyEntries={journal} onLegacyMigrated={() => setRecords((current) => current.filter((record) => record.type !== "journal"))} /></div>}
-          {view === "reminders" && <RemindersPage reminders={reminders} permission={notificationPermission} onRequestPermission={() => void requestNotifications()} onAdd={(fields) => addRecord("reminder", { ...fields, enabled: true })} onDelete={(reminder) => saveRecord({ ...reminder, deletedAt: Date.now(), updatedAt: Date.now() })} onToggle={(reminder) => saveRecord({ ...reminder, enabled: !reminder.enabled, updatedAt: Date.now() })} />}
+          {view === "reminders" && <RemindersPage reminders={reminders} permission={notificationPermission} onRequestPermission={() => void requestNotifications()} onAdd={(fields) => addRecord("reminder", { ...fields, enabled: true })} onDelete={(reminder) => saveRecord({ ...reminder, deletedAt: editTime(), updatedAt: editTime() })} onToggle={(reminder) => saveRecord({ ...reminder, enabled: !reminder.enabled, updatedAt: editTime() })} />}
           {view === "settings" && <SettingsPage syncState={syncState} configured={cloudConfigured} online={online} lastSyncedAt={lastSyncedAt} pendingCount={pendingCount} storageFull={storageFull} onSyncNow={() => void syncNow()} sampleData={sampleData} onClearSamples={removeSampleData} onExport={exportData} onImport={importData} onCopy={copyLink} onInstall={installApp} onAskAI={() => setAssistantOpen(true)} />}
         </main>
 
@@ -518,7 +519,7 @@ function App() {
 
       {detailHabit && <HabitDetailsDialog habit={detailHabit} notes={notes} onClose={() => setDetailHabit(null)} onEdit={() => editHabit(detailHabit)} onDelete={() => deleteHabit(detailHabit)} onSaveNote={(text, date) => saveNote("habit", detailHabit.id, detailHabit.name, text, date)} />}
       {detailTask && <TaskDetailsDialog task={detailTask} notes={notes} onClose={() => setDetailTask(null)} onSaveNote={(text, date) => saveNote("task", detailTask.id, detailTask.title, text, date)} />}
-      {detailTracker && <TrackerDetailsDialog tracker={detailTracker} entries={trackerEntries.filter((entry) => entry.trackerId === detailTracker.id)} notes={notes} onClose={() => setDetailTracker(null)} onUpdate={(fields) => { const updated = { ...detailTracker, ...fields, updatedAt: Date.now(), sample: false }; saveRecord(updated); setDetailTracker(updated); }} onLog={(value, date, note) => logTrackerEntry(detailTracker, value, date, note)} onSaveNote={(text, date) => saveNote("tracker", detailTracker.id, detailTracker.name, text, date)} />}
+      {detailTracker && <TrackerDetailsDialog tracker={detailTracker} entries={trackerEntries.filter((entry) => entry.trackerId === detailTracker.id)} notes={notes} onClose={() => setDetailTracker(null)} onUpdate={(fields) => { const updated = { ...detailTracker, ...fields, updatedAt: editTime(), sample: false }; saveRecord(updated); setDetailTracker(updated); }} onLog={(value, date, note) => logTrackerEntry(detailTracker, value, date, note)} onSaveNote={(text, date) => saveNote("tracker", detailTracker.id, detailTracker.name, text, date)} />}
       {assistantOpen && <AssistantDialog records={records} onClose={() => setAssistantOpen(false)} onToolCall={executeAssistantTool} />}
       {goalCoachOpen && <GoalCoachDialog records={records} onClose={() => setGoalCoachOpen(false)} onUseGoal={(draft) => { setGoalDraft(draft); setGoalCoachOpen(false); setDialog("goal"); }} />}
       {dialog && <EntryDialog key={editingHabit?.id ?? `new-${dialog}`} kind={dialog} habit={editingHabit ?? undefined} goals={goals} habits={habits} tasks={tasks} initialGoal={dialog === "goal" ? goalDraft ?? undefined : undefined} onClose={() => { setDialog(null); setEditingHabit(null); setGoalDraft(null); }} onSave={(fields) => dialog === "habit" ? saveHabit(fields) : addRecord(dialog, fields)} />}

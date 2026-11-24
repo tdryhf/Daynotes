@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { AppRecord } from "./types";
-import { applyRemote, pendingRecords, sameRecords } from "./useCloudSync";
+import { applyRemote, pendingRecords, rememberCloudVersions, sameRecords } from "./useCloudSync";
 
 const task = (id: string, updatedAt: number, extra: Partial<AppRecord> = {}) => ({ id, type: "task", title: id, list: "Home", dueDate: "2026-11-25", assignee: "", completed: false, updatedAt, ...extra }) as AppRecord;
 
@@ -31,6 +31,44 @@ describe("record sync helpers", () => {
     expect((byId.a as { title: string }).title).toBe("local newer");
     expect((byId.b as { title: string }).title).toBe("remote newer");
     expect(byId.c).toBeDefined();
+  });
+
+  it("takes the cloud's copy of a confirmed record even when the cloud's stamp is lower", () => {
+    // A device whose clock ran a day fast saved this record; the server pulled its edit time back to now.
+    const local = [task("a", 2_000, { title: "same text" } as Partial<AppRecord>)];
+    const cloud = task("a", 1_000, { title: "same text" } as Partial<AppRecord>);
+    const merged = applyRemote(local, [cloud], false, { a: 2_000 });
+    expect(merged).toEqual([cloud]);
+    expect(merged[0]).toBe(cloud);
+  });
+
+  it("keeps an unsent local edit that is newer than the cloud's copy", () => {
+    const mine = task("a", 30, { title: "mine" } as Partial<AppRecord>);
+    const merged = applyRemote([mine], [task("a", 20, { title: "theirs" } as Partial<AppRecord>)], false, { a: 10 });
+    expect(merged[0]).toBe(mine);
+  });
+
+  it("takes the cloud's copy over an unsent local edit that is older", () => {
+    const theirs = task("a", 40, { title: "theirs" } as Partial<AppRecord>);
+    const merged = applyRemote([task("a", 30, { title: "mine" } as Partial<AppRecord>)], [theirs], false, { a: 10 });
+    expect(merged[0]).toBe(theirs);
+  });
+
+  it("keeps the local object when the cloud returns the same version", () => {
+    const local = [task("a", 10)];
+    expect(applyRemote(local, [task("a", 10)], false, { a: 10 })).toBe(local);
+  });
+
+  it("uses the last copy of a record when one pull returns it twice", () => {
+    const later = task("a", 1_000, { title: "corrected" } as Partial<AppRecord>);
+    const merged = applyRemote([task("a", 5_000)], [task("a", 5_000), later], false, { a: 5_000 });
+    expect(merged[0]).toBe(later);
+  });
+
+  it("remembers the cloud's edit time for each record, even when it went down", () => {
+    const known: Record<string, number> = { a: 5_000, b: 10 };
+    rememberCloudVersions(known, [task("a", 1_000), task("b", 20), task("c", 7)]);
+    expect(known).toEqual({ a: 1_000, b: 20, c: 7 });
   });
 
   it("returns the same array when nothing changed", () => {

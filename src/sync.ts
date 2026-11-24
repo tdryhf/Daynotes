@@ -66,7 +66,20 @@ export async function pullCloudRecords(cursor?: string): Promise<{ records: AppR
   return { records, cursor: nextCursor };
 }
 
-/** Sends records to the shared store. The server keeps whichever copy of each record was edited last. */
+/** Asks the server for its current time, with this device's clock readings either side of the request. */
+export async function readServerTime() {
+  const db = requireClient();
+  const sentAt = Date.now();
+  const { data, error } = await db.rpc("server_now_ms");
+  const receivedAt = Date.now();
+  if (error) throw error;
+  return { serverMs: Number(data), sentAt, receivedAt };
+}
+
+/**
+ * Sends records to the shared store. The server keeps whichever copy of each record was edited last,
+ * and pulls any edit time later than its own clock back to the current time.
+ */
 export async function pushCloudRecords(records: AppRecord[]) {
   const db = requireClient();
   const shareable = records.filter((record) => record.type !== "journal");

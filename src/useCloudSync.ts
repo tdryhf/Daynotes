@@ -1,13 +1,16 @@
 import { useCallback, useEffect, useRef, useState, type Dispatch, type SetStateAction } from "react";
 import type { AppRecord } from "./types";
 import { dropLocalOnlySamples, mergeRecords } from "./data";
-import { cloudConfigured, pullCloudRecords, pushCloudRecords } from "./sync";
+import { cloudConfigured, pullCloudRecords, pushCloudRecords, readServerTime } from "./sync";
+import { learnServerTime } from "./clock";
 
 export type SyncState = "local" | "connecting" | "synced" | "syncing" | "offline";
 
 const SYNC_STATE_KEY = "daybook.sync.v2";
 const POLL_MS = 10_000;
 const PUSH_DEBOUNCE_MS = 400;
+/** How often to re-check this device's clock against the server's. */
+const CLOCK_CHECK_MS = 10 * 60_000;
 
 /** What this device knows about the cloud: the pull cursor and the newest version of each record the cloud has confirmed. */
 type PersistedSync = { cursor?: string; known: Record<string, number>; joined?: boolean };
@@ -38,14 +41,33 @@ export function sameRecords(a: AppRecord[], b: AppRecord[]) {
 
 /**
  * Applies what was just pulled from the cloud to a list of local records: drops this device's
- * untouched starter samples when joining a family store that already has records, then keeps the
- * newest copy of every record. Returns the same array when nothing changed.
+ * untouched starter samples when joining a family store that already has records, then takes the
+ * cloud's copy of every record it returned. The one exception is a local edit the cloud hasn't
+ * confirmed yet (newer than `known`) that is also newer than the cloud's copy: it is kept and sent.
+ * The cloud's copy wins otherwise even when its edit time is lower, because the server pulls back
+ * edit times from devices whose clocks run fast. Returns the same array when nothing changed.
  */
-export function applyRemote(current: AppRecord[], remote: AppRecord[], joining: boolean) {
+export function applyRemote(current: AppRecord[], remote: AppRecord[], joining: boolean, known: Record<string, number> = {}) {
   let next = current;
   if (joining && remote.length) next = dropLocalOnlySamples(next, new Set(remote.map((record) => record.id)));
-  if (remote.length) next = mergeRecords(next, remote);
+  if (remote.length) {
+    // A pull can return a record twice when it changed mid-pull; the later copy is the current one.
+    const cloud = new Map(remote.map((record) => [record.id, record]));
+    const local = new Map(next.map((record) => [record.id, record]));
+    for (const [id, theirs] of cloud) {
+      const mine = local.get(id);
+      const unsent = mine !== undefined && mine.updatedAt > (known[id] ?? Number.NEGATIVE_INFINITY);
+      if (mine && (mine.updatedAt === theirs.updatedAt || (unsent && mine.updatedAt > theirs.updatedAt))) continue;
+      local.set(id, theirs);
+    }
+    next = mergeRecords([...local.values()]);
+  }
   return sameRecords(current, next) ? current : next;
+}
+
+/** Records the edit time of the cloud's current copy of each record, even when it went down. */
+export function rememberCloudVersions(known: Record<string, number>, remote: AppRecord[]) {
+  for (const record of remote) known[record.id] = record.updatedAt;
 }
 
 /**
@@ -61,17 +83,26 @@ export function useCloudSync(records: AppRecord[], setRecords: Dispatch<SetState
   const running = useRef(false);
   const runAgain = useRef(false);
   const hasSynced = useRef(false);
+  const lastClockCheck = useRef(Number.NEGATIVE_INFINITY);
 
   const cycle = useCallback(async () => {
     const state = stateRef.current;
+    if (Date.now() - lastClockCheck.current >= CLOCK_CHECK_MS || Date.now() < lastClockCheck.current) {
+      lastClockCheck.current = Date.now();
+      try {
+        const reading = await readServerTime();
+        learnServerTime(reading.serverMs, reading.sentAt, reading.receivedAt);
+      } catch { /* keep the current estimate; the device's own clock is used until one succeeds */ }
+    }
     const joining = !state.joined;
     const { records: remote, cursor } = await pullCloudRecords(joining ? undefined : state.cursor);
-    for (const record of remote) state.known[record.id] = Math.max(state.known[record.id] ?? Number.NEGATIVE_INFINITY, record.updatedAt);
-    const working = applyRemote(recordsRef.current, remote, joining);
+    const known = { ...state.known };
+    const working = applyRemote(recordsRef.current, remote, joining, known);
     if (working !== recordsRef.current) {
       recordsRef.current = working;
-      setRecords((current) => applyRemote(current, remote, joining));
+      setRecords((current) => applyRemote(current, remote, joining, known));
     }
+    rememberCloudVersions(state.known, remote);
     state.cursor = cursor ?? state.cursor;
     state.joined = true;
     saveSyncState(state);

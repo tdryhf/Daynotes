@@ -4,7 +4,9 @@
 -- Design
 -- * family_records: the shared family daybook. Anyone with the app link can read it, by design.
 --   Writes only go through push_family_records(), which keeps whichever copy of each record was
---   edited last, so an older device can never overwrite newer changes.
+--   edited last, so an older device can never overwrite newer changes. Edit times are capped at the
+--   server's clock, and the app sets its edit times by server_now_ms(), so a wrong device clock
+--   can't make an edit win or lose.
 -- * private_journal / private_journal_photos: the private journal. Everything in them is encrypted
 --   in the browser before it is sent. Writes need a "write token" derived from the journal's
 --   encryption key, so only someone who can unlock the journal can change or delete it. Saves are
@@ -35,6 +37,7 @@ set search_path = ''
 as $$
 declare
   changed integer;
+  now_ms bigint := floor(extract(epoch from clock_timestamp()) * 1000)::bigint;
 begin
   if payload is null or jsonb_typeof(payload) <> 'array' then
     raise exception 'payload must be a JSON array';
@@ -42,11 +45,11 @@ begin
   if jsonb_array_length(payload) > 1000 then
     raise exception 'too many records in one request';
   end if;
-  with incoming as (
+  with valid as (
     select distinct on (r->>'id')
       r->>'id' as id,
       r as record,
-      floor((r->>'updatedAt')::numeric)::bigint as updated_ms
+      (r->>'updatedAt')::numeric as sent_ms
     from jsonb_array_elements(payload) as r
     where jsonb_typeof(r) = 'object'
       and jsonb_typeof(r->'id') = 'string'
@@ -56,6 +59,15 @@ begin
       and jsonb_typeof(r->'updatedAt') = 'number'
       and pg_column_size(r) <= 131072
     order by r->>'id', (r->>'updatedAt')::numeric desc
+  ), clamped as (
+    -- The edit time decides which copy wins. One later than the server's clock (a device whose clock
+    -- runs fast, or a faulty client) would beat every real edit until that time arrived, so it is
+    -- pulled back to now, and the stored record carries the corrected time so every device agrees.
+    select id, record, sent_ms, floor(greatest(0, least(sent_ms, now_ms)))::bigint as stamp from valid
+  ), incoming as (
+    select id, stamp as updated_ms,
+      case when sent_ms = stamp then record else jsonb_set(record, '{updatedAt}', to_jsonb(stamp)) end as record
+    from clamped
   ), written as (
     insert into public.family_records as f (id, record, updated_ms, updated_at)
     select id, record, updated_ms, clock_timestamp() from incoming
@@ -67,6 +79,24 @@ begin
   select count(*) into changed from written;
   return changed;
 end;
+$$;
+
+-- Pulls back any edit time already stored ahead of the server's clock (saved before the check above).
+with server_now as (select floor(extract(epoch from clock_timestamp()) * 1000)::bigint as ms)
+update public.family_records as f
+  set updated_ms = server_now.ms, record = jsonb_set(f.record, '{updatedAt}', to_jsonb(server_now.ms)), updated_at = clock_timestamp()
+  from server_now
+  where f.updated_ms > server_now.ms;
+
+-- The server's clock in milliseconds. The app measures how far the device's clock is from it, so
+-- edit times still order correctly on a device whose clock is set wrong.
+create or replace function public.server_now_ms()
+returns bigint
+language sql
+volatile
+set search_path = ''
+as $$
+  select floor(extract(epoch from clock_timestamp()) * 1000)::bigint;
 $$;
 
 -- ---------------------------------------------------------------------------------------------
@@ -214,11 +244,13 @@ $$;
 
 -- The app calls these with the public (publishable) key. Each one validates its input itself.
 revoke all on function public.push_family_records(jsonb) from public;
+revoke all on function public.server_now_ms() from public;
 revoke all on function public.journal_create(jsonb, text) from public;
 revoke all on function public.journal_save(bigint, jsonb, text) from public;
 revoke all on function public.journal_put_photo(text, text, text, text) from public;
 revoke all on function public.journal_delete_photos(text, text[]) from public;
 grant execute on function public.push_family_records(jsonb) to anon, authenticated;
+grant execute on function public.server_now_ms() to anon, authenticated;
 grant execute on function public.journal_create(jsonb, text) to anon, authenticated;
 grant execute on function public.journal_save(bigint, jsonb, text) to anon, authenticated;
 grant execute on function public.journal_put_photo(text, text, text, text) to anon, authenticated;
