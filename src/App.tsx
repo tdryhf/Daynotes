@@ -3,12 +3,12 @@ import {
   CalendarDays, Check, ChevronDown, ChevronLeft, ChevronRight, Clock3, Bell, Target, TrendingUp,
   Cloud, CloudOff, Download, FileUp, Heart, Home, Lightbulb, ListChecks, Menu,
   NotebookPen, Plus, Settings, Share2, Sparkles, Timer, Trash2, X,
-  LockKeyhole, UnlockKeyhole, Camera, KeyRound, Copy, BookOpen, Eye, EyeOff,
 } from "lucide-react";
-import { dateKey, isSampleData, liveRecords, loadLocalRecords, mergeRecords, monthCheckinCount, SAMPLE_KEY, saveLocalRecords, STORAGE_KEY } from "./data";
-import { cloudConfigured, readCloudRecords, writeCloudRecords, readPrivateJournal, writePrivateJournal } from "./sync";
-import { changePassword, createVault, openVault, resetPassword, sealContent, type JournalContent, type JournalEnvelope } from "./journalVault";
-import type { AppRecord, CustomTracker, FamilyDate, Goal, GoalDraft, Habit, Idea, JournalEntry, JournalNote, PerformanceReflection, Task, TaskCategory, View } from "./types";
+import { dateKey, hasSampleRecords, isAppRecord, liveRecords, loadLocalRecords, mergeRecords, monthCheckinCount, saveLocalRecords, STORAGE_KEY } from "./data";
+import { cloudConfigured } from "./sync";
+import { sameRecords, useCloudSync, type SyncState } from "./useCloudSync";
+import { JournalPage } from "./journal";
+import type { AppRecord, CustomTracker, FamilyDate, Goal, GoalDraft, Habit, Idea, JournalNote, PerformanceReflection, Task, TaskCategory, View } from "./types";
 import { refineNote, type AssistantToolCall } from "./ai";
 import { AssistantDialog, ConsistencyVisualization, GoalCoachDialog, GoalsPage, HabitDetailsDialog, RemindersPage, TaskDetailsDialog, TaskTitleButton, TrackerDetailsDialog, TrackersPage } from "./features";
 import { InsightsPage } from "./insights";
@@ -61,21 +61,19 @@ const countCadence = (records: AppRecord[], habit: Habit, date: Date) => {
   const keys = habit.cadence === "month" ? monthDates(date).map(dateKey) : weekDates(date).map(dateKey);
   return records.filter((record) => record.type === "checkin" && record.habitId === habit.id && record.completed && keys.includes(record.date) && !record.deletedAt).length;
 };
-const recordIsSame = (a: AppRecord[], b: AppRecord[]) => JSON.stringify(a) === JSON.stringify(b);
 
 type DialogKind = "habit" | "task" | "goal" | "tracker" | "reminder" | "idea" | "date" | "journal" | null;
-type SyncState = "local" | "connecting" | "synced" | "syncing" | "offline" | "error";
 
 function App() {
-  const [records, setRecords] = useState<AppRecord[]>(() => loadLocalRecords());
-  const recordsRef = useRef(records);
+  const [records, setRecords] = useState<AppRecord[]>(() => loadLocalRecords(!cloudConfigured));
   const [view, setView] = useState<View>(() => {
     const hash = window.location.hash.slice(1);
     return navigation.some((item) => item.id === hash) || hash === "settings" ? hash as View : "today";
   });
-  const [syncState, setSyncState] = useState<SyncState>(cloudConfigured ? "connecting" : "local");
-  const [cloudReady, setCloudReady] = useState(!cloudConfigured);
-  const [sampleData, setSampleData] = useState(isSampleData());
+  const { status: syncState, lastSyncedAt, pendingCount, syncNow } = useCloudSync(records, setRecords);
+  const sampleData = hasSampleRecords(records);
+  const [journalOpened, setJournalOpened] = useState(view === "journal");
+  const [storageFull, setStorageFull] = useState(false);
   const [dialog, setDialog] = useState<DialogKind>(null);
   const [detailHabit, setDetailHabit] = useState<Habit | null>(null);
   const [detailTask, setDetailTask] = useState<Task | null>(null);
@@ -125,85 +123,27 @@ function App() {
   }, []);
 
   useEffect(() => {
-    recordsRef.current = records;
-    saveLocalRecords(records);
-    if (cloudConfigured && cloudReady) setSyncState("syncing");
-  }, [records, cloudReady]);
+    setStorageFull(!saveLocalRecords(records));
+  }, [records]);
 
   useEffect(() => {
-    if (!cloudConfigured) return;
-    let active = true;
-    const connect = async () => {
-      setSyncState("connecting");
-      try {
-        const remote = await readCloudRecords();
-        if (!active) return;
-        const local = recordsRef.current;
-        if (remote.length === 0 && local.length > 0) {
-          await writeCloudRecords(local);
-        } else {
-          const merged = mergeRecords(local, remote);
-          if (!recordIsSame(local, merged)) setRecords(merged);
-          await writeCloudRecords(merged);
-        }
-        if (active) setSyncState("synced");
-      } catch {
-        if (active) setSyncState("offline");
-      } finally {
-        if (active) setCloudReady(true);
-      }
-    };
-    void connect();
-    return () => { active = false; };
-  }, []);
-
-  useEffect(() => {
-    if (!cloudConfigured || !cloudReady || !online) return;
-    const timeout = window.setTimeout(async () => {
-      try {
-        await writeCloudRecords(records);
-        setSyncState("synced");
-      } catch {
-        setSyncState("offline");
-      }
-    }, 500);
-    return () => window.clearTimeout(timeout);
-  }, [records, cloudReady, online]);
-
-  useEffect(() => {
-    if (!cloudConfigured || !cloudReady) return;
-    const poll = window.setInterval(async () => {
-      if (!navigator.onLine) return;
-      try {
-        const remote = await readCloudRecords();
-        const merged = mergeRecords(recordsRef.current, remote);
-        if (!recordIsSame(recordsRef.current, merged)) setRecords(merged);
-        setSyncState("synced");
-      } catch {
-        setSyncState("offline");
-      }
-    }, 12000);
-    return () => window.clearInterval(poll);
-  }, [cloudReady]);
-
-  useEffect(() => {
-    const channel = "BroadcastChannel" in window ? new BroadcastChannel("daybook-records") : null;
+    // Another tab of this app on the same device saved records: fold them in.
     const onStorage = (event: StorageEvent) => {
       if (event.key !== STORAGE_KEY || !event.newValue) return;
       try {
-        const incoming = JSON.parse(event.newValue) as AppRecord[];
-        setRecords((current) => mergeRecords(current, incoming));
+        const parsed = JSON.parse(event.newValue) as unknown;
+        if (!Array.isArray(parsed)) return;
+        const incoming = parsed.filter(isAppRecord);
+        setRecords((current) => { const merged = mergeRecords(current, incoming); return sameRecords(current, merged) ? current : merged; });
       } catch { /* keep the current copy if another tab wrote invalid data */ }
     };
-    const onMessage = (event: MessageEvent<AppRecord[]>) => setRecords((current) => mergeRecords(current, event.data));
-    channel?.addEventListener("message", onMessage);
     window.addEventListener("storage", onStorage);
-    return () => { channel?.close(); window.removeEventListener("storage", onStorage); };
+    return () => window.removeEventListener("storage", onStorage);
   }, []);
 
   useEffect(() => {
-    const up = () => { setOnline(true); if (cloudConfigured) setSyncState("syncing"); };
-    const down = () => { setOnline(false); setSyncState("offline"); };
+    const up = () => setOnline(true);
+    const down = () => setOnline(false);
     window.addEventListener("online", up);
     window.addEventListener("offline", down);
     return () => { window.removeEventListener("online", up); window.removeEventListener("offline", down); };
@@ -269,6 +209,7 @@ function App() {
 
   const chooseView = (nextView: View) => {
     setView(nextView);
+    if (nextView === "journal") setJournalOpened(true);
     window.location.hash = nextView;
     setMobileMenuOpen(false);
   };
@@ -467,8 +408,6 @@ function App() {
   };
   const removeSampleData = () => {
     setRecords((current) => current.map((record) => record.sample ? { ...record, deletedAt: Date.now(), updatedAt: Date.now() } as AppRecord : record));
-    localStorage.setItem(SAMPLE_KEY, "cleared");
-    setSampleData(false);
     setToast("Sample entries cleared. Your own records are still here.");
   };
 
@@ -567,9 +506,9 @@ function App() {
           {view === "trackers" && <TrackersPage trackers={trackers} entries={trackerEntries} notes={notes} onAdd={() => setDialog("tracker")} onLog={logTrackerEntry} onSaveNote={(tracker, text, date) => saveNote("tracker", tracker.id, tracker.name, text, date)} onDelete={deleteTracker} onSelect={setDetailTracker} />}
           {view === "ideas" && <IdeasPage ideas={ideas} filter={ideaFilter} setFilter={setIdeaFilter} onDelete={(idea) => saveRecord({ ...idea, deletedAt: Date.now(), updatedAt: Date.now() })} onAdd={() => setDialog("idea")} />}
           {view === "dates" && <DatesPage dates={dates} onDelete={(event) => saveRecord({ ...event, deletedAt: Date.now(), updatedAt: Date.now() })} onAdd={() => setDialog("date")} />}
-          {view === "journal" && <JournalPage legacyEntries={journal} onLegacyMigrated={() => setRecords((current) => current.filter((record) => record.type !== "journal"))} />}
+          {journalOpened && <div hidden={view !== "journal"}><JournalPage active={view === "journal"} legacyEntries={journal} onLegacyMigrated={() => setRecords((current) => current.filter((record) => record.type !== "journal"))} /></div>}
           {view === "reminders" && <RemindersPage reminders={reminders} permission={notificationPermission} onRequestPermission={() => void requestNotifications()} onAdd={(fields) => addRecord("reminder", { ...fields, enabled: true })} onDelete={(reminder) => saveRecord({ ...reminder, deletedAt: Date.now(), updatedAt: Date.now() })} onToggle={(reminder) => saveRecord({ ...reminder, enabled: !reminder.enabled, updatedAt: Date.now() })} />}
-          {view === "settings" && <SettingsPage syncState={syncState} configured={cloudConfigured} online={online} sampleData={sampleData} onClearSamples={removeSampleData} onExport={exportData} onImport={importData} onCopy={copyLink} onInstall={installApp} onAskAI={() => setAssistantOpen(true)} />}
+          {view === "settings" && <SettingsPage syncState={syncState} configured={cloudConfigured} online={online} lastSyncedAt={lastSyncedAt} pendingCount={pendingCount} storageFull={storageFull} onSyncNow={() => void syncNow()} sampleData={sampleData} onClearSamples={removeSampleData} onExport={exportData} onImport={importData} onCopy={copyLink} onInstall={installApp} onAskAI={() => setAssistantOpen(true)} />}
         </main>
 
         <nav className="bottom-nav" aria-label="Main navigation">
@@ -594,7 +533,7 @@ type BeforeInstallPromptEvent = Event & { prompt: () => Promise<void>; userChoic
 
 function SyncBadge({ state, configured, online }: { state: SyncState; configured: boolean; online: boolean }) {
   const Icon = !online || state === "offline" ? CloudOff : configured ? Cloud : CloudOff;
-  const label = !online ? "Offline" : state === "connecting" ? "Connecting" : state === "syncing" ? "Syncing" : state === "error" || state === "offline" ? "Saved on this device" : configured ? "Synced" : "On this device";
+  const label = !online ? "Offline" : state === "connecting" ? "Connecting" : state === "syncing" ? "Syncing" : state === "offline" ? "Saved on this device" : configured ? "Synced" : "On this device";
   return <span className={`sync-badge sync-${state}`} title={configured ? "Cloud sync uses the public family database." : "Add Supabase settings to sync between devices."}><Icon size={14} aria-hidden="true" />{label}</span>;
 }
 
@@ -741,88 +680,12 @@ function DateRow({ event, onDelete }: { event: FamilyDate; onDelete: (event: Fam
   return <article className="date-row"><div className="date-block"><span>{date.toLocaleDateString(undefined, { month: "short" })}</span><strong>{date.getDate()}</strong><small>{date.toLocaleDateString(undefined, { weekday: "short" })}</small></div><div className="date-detail"><h3>{event.title}</h3>{event.note && <p>{event.note}</p>}</div>{event.time && <time className="event-time" dateTime={`${event.date}T${event.time}`}><Clock3 size={14} />{event.time}</time>}<button className="row-delete" onClick={() => onDelete(event)} aria-label={`Remove date ${event.title}`} title={`Remove ${event.title}`}><Trash2 size={15} /></button></article>;
 }
 
-function PasswordInput({ value, onChange, autoComplete, placeholder, autoFocus }: { value: string; onChange: (value: string) => void; autoComplete: string; placeholder?: string; autoFocus?: boolean }) {
-  const [visible, setVisible] = useState(false);
-  return <span className="password-input"><input className="input-control" type={visible ? "text" : "password"} autoComplete={autoComplete} autoCapitalize="off" autoCorrect="off" spellCheck={false} value={value} onChange={(event) => onChange(event.target.value)} placeholder={placeholder} autoFocus={autoFocus} required /><button className="password-toggle" type="button" onClick={() => setVisible(!visible)} aria-label={visible ? "Hide passphrase" : "Show passphrase"} aria-pressed={visible} title={visible ? "Hide passphrase" : "Show passphrase"}>{visible ? <EyeOff size={17} /> : <Eye size={17} />}</button></span>;
-}
-
-function JournalPage({ legacyEntries, onLegacyMigrated }: { legacyEntries: JournalEntry[]; onLegacyMigrated: () => void }) {
-  const journalStorage = cloudConfigured ? "your Supabase project" : "this device's local server";
-  const [loading, setLoading] = useState(true), [envelope, setEnvelope] = useState<JournalEnvelope | null>(null);
-  const [content, setContent] = useState<JournalContent | null>(null), [key, setKey] = useState<CryptoKey | null>(null);
-  const [password, setPassword] = useState(""), [recovery, setRecovery] = useState(""), [newPassword, setNewPassword] = useState("");
-  const [error, setError] = useState(""), [notice, setNotice] = useState(""), [resetMode, setResetMode] = useState(false), [changingPassword, setChangingPassword] = useState(false), [saving, setSaving] = useState(false);
-  const [pageIndex, setPageIndex] = useState(0), [showRecovery, setShowRecovery] = useState(false), [savedRecovery, setSavedRecovery] = useState("");
-  const photoInput = useRef<HTMLInputElement>(null), loaded = useRef(false);
-  useEffect(() => { let active = true; readPrivateJournal().then((value) => { if (active) { setEnvelope(value); setLoading(false); } }).catch((reason: unknown) => { if (active) { setError(reason instanceof Error ? reason.message : "Could not reach journal storage."); setLoading(false); } }); return () => { active = false; }; }, []);
-  const saveNow = async () => {
-    if (!key || !content || !envelope || !loaded.current) return;
-    setSaving(true);
-    try { const next = await sealContent(content, key, envelope); await writePrivateJournal(next); setEnvelope(next); }
-    catch (reason) { setError(reason instanceof Error ? reason.message : "The journal could not be saved."); }
-    finally { setSaving(false); }
-  };
-  useEffect(() => {
-    if (!key || !content || !envelope || !loaded.current) return;
-    const timer = window.setTimeout(() => { void saveNow(); }, 600);
-    return () => window.clearTimeout(timer);
-  }, [content]);
-
-  const createJournal = async (event: FormEvent<HTMLFormElement>) => {
-    event.preventDefault(); setError("");
-    if (password.length < 8) { setError("Use at least 8 characters for your passphrase."); return; }
-    try {
-      const migrated = legacyEntries.length ? legacyEntries.map((entry) => `${entry.title}\n${entry.body}`).join("\n\n") : "";
-      const initial = { pages: [{ id: crypto.randomUUID(), text: migrated, updatedAt: Date.now() }], photos: [], stickyNote: "" };
-      const created = await createVault(password, initial); await writePrivateJournal(created.envelope);
-      if (legacyEntries.length) onLegacyMigrated();
-      setEnvelope(created.envelope); setContent(created.content); setKey(created.key); loaded.current = true;
-      setSavedRecovery(created.code); setShowRecovery(true); setPassword("");
-    } catch (reason) { setError(reason instanceof Error ? reason.message : "The private journal could not be created."); }
-  };
-  const unlock = async (event: FormEvent<HTMLFormElement>) => { event.preventDefault(); setError(""); if (!envelope) return; try { const opened = await openVault(envelope, password); setKey(opened.key); setContent(opened.content); loaded.current = true; setPassword(""); setPageIndex(0); } catch (reason) { setError(reason instanceof Error ? reason.message : "Could not unlock the journal."); } };
-  const reset = async (event: FormEvent<HTMLFormElement>) => {
-    event.preventDefault(); setError(""); if (!envelope) return;
-    if (newPassword.length < 8) { setError("Use at least 8 characters for the new passphrase."); return; }
-    try { const result = await resetPassword(envelope, recovery, newPassword); await writePrivateJournal(result.envelope); setEnvelope(result.envelope); setKey(result.key); setContent(result.content); loaded.current = true; setSavedRecovery(result.code); setShowRecovery(true); setRecovery(""); setNewPassword(""); setResetMode(false); }
-    catch (reason) { setError(reason instanceof Error ? reason.message : "The passphrase could not be reset."); }
-  };
-  const change = async (event: FormEvent<HTMLFormElement>) => {
-    event.preventDefault(); setError(""); if (!envelope || !key) return;
-    if (newPassword.length < 8) { setError("Use at least 8 characters for the new passphrase."); return; }
-    try { const next = await changePassword(envelope, key, newPassword); await writePrivateJournal(next); setEnvelope(next); setChangingPassword(false); setNewPassword(""); setNotice("Passphrase changed."); }
-    catch (reason) { setError(reason instanceof Error ? reason.message : "Could not change the passphrase."); }
-  };
-  const updatePage = (text: string) => { if (content) setContent({ ...content, pages: content.pages.map((page, index) => index === pageIndex ? { ...page, text, updatedAt: Date.now() } : page) }); };
-  const addPage = () => { if (!content) return; const pages = [...content.pages, { id: crypto.randomUUID(), text: "", updatedAt: Date.now() }]; setContent({ ...content, pages }); setPageIndex(pages.length - 1); };
-  const addPhoto = async (file?: File) => {
-    if (!file || !content) return; setError("");
-    try { const bitmap = await createImageBitmap(file); const scale = Math.min(1, 1600 / Math.max(bitmap.width, bitmap.height)); const canvas = document.createElement("canvas"); canvas.width = Math.round(bitmap.width * scale); canvas.height = Math.round(bitmap.height * scale); canvas.getContext("2d")?.drawImage(bitmap, 0, 0, canvas.width, canvas.height); bitmap.close(); const image = canvas.toDataURL("image/jpeg", 0.78); setContent({ ...content, photos: [...content.photos, { id: crypto.randomUUID(), label: "A moment", image, addedAt: Date.now() }] }); setNotice("Photo added to your private gallery."); }
-    catch { setError("That picture could not be prepared for the private gallery."); } if (photoInput.current) photoInput.current.value = "";
-  };
-  const lock = async () => { await saveNow(); loaded.current = false; setKey(null); setContent(null); setPassword(""); setRecovery(""); setNewPassword(""); setChangingPassword(false); };
-  if (loading) return <section className="journal-lock paper-sheet"><span className="lock-emblem"><BookOpen size={23} /></span><h2>Opening your journal</h2><p>Checking your journal storage…</p></section>;
-  if (!window.isSecureContext || !window.crypto?.subtle) return <section className="journal-lock paper-sheet"><span className="lock-emblem"><LockKeyhole size={23} /></span><h2>Secure connection needed</h2><p>Open the locally hosted daybook over HTTPS to use journal encryption on this device. Your journal stays locked until the browser can provide secure encryption.</p></section>;
-  if (!envelope) return <section className="journal-lock paper-sheet"><span className="lock-emblem"><LockKeyhole size={23} /></span><p className="journal-kicker">A private place, just for you</p><h2>Begin your journal</h2><p>Your pages and private gallery are encrypted in your browser before they are sent to {journalStorage}. Enter the passphrase you want to use.</p><form className="journal-auth-form" onSubmit={createJournal}><label className="field"><span>Passphrase</span><PasswordInput autoComplete="new-password" value={password} onChange={setPassword} /></label><p className="journal-footnote">Your passphrase is never sent to the storage service. Save the recovery code shown after setup somewhere safe.</p><p className="form-error" role="alert">{error}</p><button className="primary-button" type="submit"><LockKeyhole size={16} /> Create private journal</button></form></section>;
-  if (!key || !content) return <section className="journal-lock paper-sheet"><span className="lock-emblem"><LockKeyhole size={23} /></span><p className="journal-kicker">Your private journal</p><h2>{resetMode ? "Reset your passphrase" : "Unlock your pages"}</h2>{!resetMode ? <form className="journal-auth-form" onSubmit={unlock}><label className="field"><span>Passphrase</span><PasswordInput autoComplete="current-password" value={password} onChange={setPassword} autoFocus /></label><p className="form-error" role="alert">{error}</p><button className="primary-button" type="submit"><UnlockKeyhole size={16} /> Unlock journal</button><button className="text-link" type="button" onClick={() => { setResetMode(true); setError(""); }}>Forgot passphrase? Use recovery code</button></form> : <form className="journal-auth-form" onSubmit={reset}><label className="field"><span>Recovery code</span><input className="input-control" value={recovery} onChange={(event) => setRecovery(event.target.value)} autoFocus required /></label><label className="field"><span>New passphrase</span><PasswordInput autoComplete="new-password" value={newPassword} onChange={setNewPassword} /></label><p className="form-error" role="alert">{error}</p><button className="primary-button" type="submit"><KeyRound size={16} /> Reset passphrase</button><button className="text-link" type="button" onClick={() => { setResetMode(false); setError(""); }}>Back to unlock</button></form>}</section>;
-  const page = content.pages[pageIndex];
-  return <div className="journal-workspace">
-    {showRecovery && <section className="recovery-card paper-sheet"><div><span className="journal-kicker">Save this recovery code</span><h2>Keep a way back in</h2><p>This code can reset the passphrase if you forget it. Save it somewhere separate from this device.</p><code>{savedRecovery}</code></div><button className="soft-button" onClick={() => { void navigator.clipboard.writeText(savedRecovery); setNotice("Recovery code copied."); }}><Copy size={16} /> Copy code</button><button className="icon-button" onClick={() => setShowRecovery(false)} aria-label="Close recovery code"><X size={18} /></button></section>}
-    <div className="journal-toolbar"><div className="journal-save-state"><LockKeyhole size={15} /><span>{saving ? "Saving privately…" : "Private journal"}</span></div><div className="journal-tools"><button className="soft-button" onClick={() => photoInput.current?.click()}><Camera size={16} /> Add a photo</button><input ref={photoInput} className="visually-hidden" type="file" accept="image/*" capture="environment" onChange={(event) => void addPhoto(event.target.files?.[0])} /><button className="quiet-button" onClick={() => setChangingPassword(!changingPassword)}><KeyRound size={15} /> Passphrase</button><button className="icon-button" onClick={() => void lock()} aria-label="Lock the journal"><LockKeyhole size={17} /></button></div></div>
-    {changingPassword && <form className="password-change paper-sheet" onSubmit={change}><div><strong>Change your passphrase</strong><span>Use at least 8 characters.</span></div><PasswordInput autoComplete="new-password" value={newPassword} onChange={setNewPassword} placeholder="New passphrase" /><button className="soft-button" type="submit">Save passphrase</button></form>}
-    {(error || notice) && <p className={`journal-flash ${error ? "has-error" : ""}`} role={error ? "alert" : "status"}>{error || notice}</p>}
-    <section className="sticky-note paper-sheet"><div className="sticky-note-heading"><span className="sticky-pin"/><div><span className="journal-kicker">Post-it</span><strong>Keep one thought in front</strong></div><small>{saving ? "Saving…" : "Private and encrypted"}</small></div><textarea aria-label="Your private post-it note" maxLength={400} value={content.stickyNote ?? ""} onChange={(event) => setContent({ ...content, stickyNote: event.target.value })} placeholder="One thing to remember…" rows={2}/></section>
-    <section className="journal-paper paper-sheet" aria-label="Journal page"><div className="paper-page-top"><span>DAYBOOK · PERSONAL NOTES</span><span>{String(pageIndex + 1).padStart(2, "0")}</span></div><textarea aria-label={`Journal page ${pageIndex + 1}`} className="freeflow-page" value={page?.text ?? ""} onBlur={() => void saveNow()} onChange={(event) => updatePage(event.target.value)} placeholder="Let your thoughts find their own shape…" spellCheck /><div className="paper-page-bottom"><span>Write freely. This page has no date or prompt.</span><div className="page-turn"><button className="icon-button" disabled={pageIndex === 0} onClick={() => setPageIndex((index) => index - 1)} aria-label="Previous page"><ChevronLeft size={18} /></button><span>Page {pageIndex + 1} of {content.pages.length}</span><button className="icon-button" disabled={pageIndex === content.pages.length - 1} onClick={() => setPageIndex((index) => index + 1)} aria-label="Next page"><ChevronRight size={18} /></button><button className="soft-button page-add" onClick={addPage}><Plus size={15} /> New page</button></div></div></section>
-    <section className="photo-gallery paper-sheet"><div className="gallery-heading"><span className="lock-emblem"><Camera size={18} /></span><div><h2>Private photo gallery</h2><p>Pictures are separate from your writing and encrypted before upload.</p></div><button className="soft-button" onClick={() => photoInput.current?.click()}><Camera size={15} /> Take a photo</button></div>{content.photos.length ? <div className="gallery-grid">{content.photos.map((photo) => <figure className="gallery-photo" key={photo.id}><img src={photo.image} alt={photo.label || "Private gallery photo"} /><div><input aria-label="Photo label" value={photo.label} onChange={(event) => setContent({ ...content, photos: content.photos.map((item) => item.id === photo.id ? { ...item, label: event.target.value } : item) })} /><button className="row-delete" onClick={() => setContent({ ...content, photos: content.photos.filter((item) => item.id !== photo.id) })} aria-label="Remove photo"><Trash2 size={15} /></button></div></figure>)}</div> : <div className="gallery-empty"><Camera size={19} /><span>Photos you add will live here, separate from your pages.</span></div>}</section>
-  </div>;
-}
-
-function SettingsPage({ syncState, configured, online, sampleData, onClearSamples, onExport, onImport, onCopy, onInstall, onAskAI }: {
-  syncState: SyncState; configured: boolean; online: boolean; sampleData: boolean; onClearSamples: () => void; onExport: () => void; onImport: (file?: File) => void; onCopy: () => void; onInstall: () => void; onAskAI: () => void;
+function SettingsPage({ syncState, configured, online, lastSyncedAt, pendingCount, storageFull, onSyncNow, sampleData, onClearSamples, onExport, onImport, onCopy, onInstall, onAskAI }: {
+  syncState: SyncState; configured: boolean; online: boolean; lastSyncedAt: number | null; pendingCount: number; storageFull: boolean; onSyncNow: () => void; sampleData: boolean; onClearSamples: () => void; onExport: () => void; onImport: (file?: File) => void; onCopy: () => void; onInstall: () => void; onAskAI: () => void;
 }) {
   return <div className="settings-page">
-    <section className="settings-sheet paper-sheet"><div className="settings-heading"><span className="settings-icon"><Share2 size={19} /></span><div><h2>Open family link</h2><p>Anyone with this link can view and edit the shared family daybook. No account or password is needed.</p></div></div><div className="public-note"><strong>Your private journal is separate.</strong><span>Journal pages and gallery photos are encrypted before they are sent to {cloudConfigured ? "Supabase" : "the local journal service"}. The storage contains encrypted data, not readable photos or text.</span></div><button className="primary-button" onClick={onCopy}><Share2 size={16} /> Copy the daybook link</button></section>
-    <section className="settings-sheet paper-sheet"><div className="settings-heading"><span className="settings-icon settings-icon-green"><Cloud size={19} /></span><div><h2>Sync between devices</h2><p>{configured ? `Cloud sync is set up. ${syncState === "synced" ? "Your latest changes are saved online." : "Changes will sync when your connection is back."}` : "This copy currently saves to this device. Add a Supabase project to share it across devices."}</p></div></div>{!configured && <div className="setup-steps"><p className="steps-lead">Connect shared sync in three small steps</p><ol><li>Create a free Supabase project and copy its project URL and anon key.</li><li>Run the SQL in <code>supabase/schema.sql</code> in the project’s SQL editor.</li><li>Copy <code>.env.example</code> to <code>.env.local</code>, add the two values, then restart the app.</li></ol><p className="public-note compact-note"><strong>This creates an open database.</strong><span>Anyone with the app URL can read, add, change, or remove records. Do not use confidential information.</span></p></div>}<div className="sync-status-line"><span className={`status-dot ${online && syncState === "synced" ? "is-green" : ""}`} /><span>{configured ? syncState === "synced" ? "Connected" : syncState === "offline" ? "Offline changes stay on this device" : "Connecting to shared storage" : "Local storage is ready"}</span></div></section>
+    <section className="settings-sheet paper-sheet"><div className="settings-heading"><span className="settings-icon"><Share2 size={19} /></span><div><h2>Open family link</h2><p>Anyone with this link can view and edit the shared family daybook. No account or password is needed.</p></div></div><div className="public-note"><strong>Your private journal is separate.</strong><span>Journal pages and gallery photos are encrypted on your device with your journal passphrase before they are stored. The family link alone can’t open them.</span></div><button className="primary-button" onClick={onCopy}><Share2 size={16} /> Copy the daybook link</button></section>
+    <section className="settings-sheet paper-sheet"><div className="settings-heading"><span className="settings-icon settings-icon-green"><Cloud size={19} /></span><div><h2>Sync between devices</h2><p>{configured ? syncState === "synced" ? "Cloud sync is on. Every device that opens this link shares the same habits, to-dos, goals, dates, and ideas." : syncState === "offline" || !online ? "You’re offline right now. Changes are kept on this device and sync automatically when the connection is back." : "Cloud sync is on. Connecting to the shared family store…" : "This copy saves to this device only."}</p></div></div><div className="sync-status-line"><span className={`status-dot ${online && syncState === "synced" ? "is-green" : ""}`} /><span>{configured ? syncState === "synced" ? `Connected${lastSyncedAt ? ` · last synced ${new Date(lastSyncedAt).toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" })}` : ""}` : pendingCount ? `${pendingCount} change${pendingCount === 1 ? "" : "s"} waiting to sync` : syncState === "offline" || !online ? "Offline — changes stay on this device until you reconnect" : "Connecting to shared storage" : "Local storage is ready"}</span>{configured && <button className="quiet-button" onClick={onSyncNow} disabled={!online}>Sync now</button>}</div>{storageFull && <p className="public-note compact-note"><strong>This browser’s storage is full.</strong><span>Recent changes are still being sent to the cloud, but this device can’t keep an offline copy. Free up browser storage to restore offline use.</span></p>}</section>
     <section className="settings-sheet paper-sheet"><div className="settings-heading"><span className="settings-icon settings-icon-blue"><Download size={19} /></span><div><h2>Take a copy with you</h2><p>Save a backup file or bring records back from another device.</p></div></div><div className="settings-actions"><button className="soft-button" onClick={onExport}><Download size={16} /> Download a backup</button><label className="soft-button file-button"><FileUp size={16} /> Import a backup<input type="file" accept="application/json,.json" onChange={(event) => onImport(event.target.files?.[0])} /></label><button className="soft-button" onClick={onInstall}>Add to home screen</button></div></section>
     <section className="settings-sheet assistant-settings"><div className="settings-heading"><span className="settings-icon settings-icon-blue"><Sparkles size={18} /></span><div><h2>Personal assistant</h2><p>Ask privately about your daybook or ask it to add a habit, task, goal, tracker, reminder, or note. Configure <code>GROQ_API_KEY</code> on the server to enable it.</p></div></div><button className="quiet-button" onClick={onAskAI}>Open assistant</button></section>
     <section className="settings-sheet last-settings"><div><h2>Sample workbook entries</h2><p>The starter habits and family to-dos are examples adapted from your Excel sample.</p></div><button className="quiet-button" disabled={!sampleData} onClick={onClearSamples}><Trash2 size={15} /> {sampleData ? "Clear sample entries" : "Samples cleared"}</button></section>

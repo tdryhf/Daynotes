@@ -52,28 +52,63 @@ export function createSampleRecords(): AppRecord[] {
   return [...habits, ...checkins, ...tasks, ...events];
 }
 
-export function loadLocalRecords(): AppRecord[] {
+/**
+ * Loads this device's copy of the shared records. A device that has never stored anything starts with
+ * the workbook samples only when it is not connected to the shared cloud store; connected devices start
+ * empty and receive the family's records from the cloud instead of adding another copy of the samples.
+ */
+export function loadLocalRecords(seedSamples = true): AppRecord[] {
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
-    if (!raw) return createSampleRecords();
+    if (!raw) return seedSamples ? createSampleRecords() : [];
     const parsed = JSON.parse(raw);
-    return Array.isArray(parsed) ? parsed as AppRecord[] : createSampleRecords();
+    return Array.isArray(parsed) ? (parsed as unknown[]).filter(isAppRecord) : seedSamples ? createSampleRecords() : [];
   } catch {
-    return createSampleRecords();
+    return seedSamples ? createSampleRecords() : [];
   }
 }
 
-export function saveLocalRecords(records: AppRecord[]) {
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(records.filter((record) => record.type !== "journal")));
+export function isAppRecord(value: unknown): value is AppRecord {
+  return Boolean(value) && typeof value === "object" && typeof (value as AppRecord).id === "string" && typeof (value as AppRecord).type === "string" && typeof (value as AppRecord).updatedAt === "number";
 }
 
+/** Returns false if the browser refused to store the records (for example, storage is full). */
+export function saveLocalRecords(records: AppRecord[]) {
+  try {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(records.filter((record) => record.type !== "journal")));
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/** Keeps the most recently edited copy of every record. Ties keep the first copy seen. */
 export function mergeRecords(...sets: AppRecord[][]): AppRecord[] {
   const merged = new Map<string, AppRecord>();
   for (const record of sets.flat()) {
     const previous = merged.get(record.id);
     if (!previous || record.updatedAt > previous.updatedAt) merged.set(record.id, record);
   }
-  return [...merged.values()].sort((a, b) => a.updatedAt - b.updatedAt);
+  return [...merged.values()].sort((a, b) => a.updatedAt - b.updatedAt || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
+}
+
+export const hasSampleRecords = (records: AppRecord[]) => records.some((record) => record.sample && !record.deletedAt);
+
+/**
+ * When a device joins a shared store that already has records, its untouched starter samples would
+ * only duplicate the samples the family already has (or has already cleared). Drop them, together with
+ * check-ins and notes that belong to those dropped sample habits, unless the cloud already knows them.
+ */
+export function dropLocalOnlySamples(local: AppRecord[], remoteIds: Set<string>) {
+  const dropped = new Set(local.filter((record) => record.sample && !remoteIds.has(record.id)).map((record) => record.id));
+  if (!dropped.size) return local;
+  return local.filter((record) => {
+    if (dropped.has(record.id)) return false;
+    if (remoteIds.has(record.id)) return true;
+    if (record.type === "checkin" && dropped.has(record.habitId)) return false;
+    if (record.type === "note" && dropped.has(record.ownerId)) return false;
+    return true;
+  });
 }
 
 export function liveRecords<T extends AppRecord["type"]>(records: AppRecord[], type: T) {
@@ -256,6 +291,3 @@ function parseDateKey(value: string) {
   return new Date(year, month - 1, day, 12);
 }
 
-export function isSampleData() {
-  return localStorage.getItem(SAMPLE_KEY) !== "cleared";
-}
