@@ -147,7 +147,8 @@ export function GoalCoachDialog({ records, onClose, onUseGoal }: { records: AppR
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   useEffect(() => { const element = dialogRef.current; if (!element) return; element.showModal(); return () => { if (element.open) element.close(); }; }, []);
-  useEffect(() => bottomRef.current?.scrollIntoView({ behavior: "smooth", block: "end" }), [conversation, busy, goalDraft]);
+  // Block body on purpose: scrollIntoView returns a Promise in current browsers, and React would call it as a cleanup.
+  useEffect(() => { bottomRef.current?.scrollIntoView({ behavior: "smooth", block: "end" }); }, [conversation, busy, goalDraft]);
   const send = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     const text = draft.trim();
@@ -296,7 +297,8 @@ export function AssistantDialog({ records, onClose, onToolCall }: { records: App
   const [status, setStatus] = useState("");
   const [error, setError] = useState("");
   useEffect(() => { const element = dialogRef.current; if (!element) return; element.showModal(); return () => { if (element.open) element.close(); }; }, []);
-  useEffect(() => bottomRef.current?.scrollIntoView({ behavior: "smooth", block: "end" }), [transcript, status]);
+  // Block body on purpose: scrollIntoView returns a Promise in current browsers, and React would call it as a cleanup.
+  useEffect(() => { bottomRef.current?.scrollIntoView({ behavior: "smooth", block: "end" }); }, [transcript, status]);
   const send = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     const text = draft.trim();
