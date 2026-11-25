@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Matches theme_color and background_color in public/manifest.webmanifest. -->
+    <color name="themeColor">#F8F6ED</color>
+    <color name="backgroundColor">#F8F6ED</color>
+    <!-- The yellow tile behind the page glyph in public/icon.svg. -->
+    <color name="iconBackground">#F2DB42</color>
+</resources>

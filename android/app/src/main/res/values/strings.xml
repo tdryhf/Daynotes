@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="appName">Daybook</string>
+    <string name="launchUrl" translatable="false">https://daynotes-nu.vercel.app/#today</string>
+    <string name="providerAuthority" translatable="false">app.vercel.daynotes_nu.twa.fileprovider</string>
+    <string name="assetStatements" translatable="false">[{\"relation\": [\"delegate_permission/common.handle_all_urls\"], \"target\": {\"namespace\": \"web\", \"site\": \"https://daynotes-nu.vercel.app\"}}]</string>
+</resources>

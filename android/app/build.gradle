@@ -1,0 +1,44 @@
+plugins {
+    id 'com.android.application'
+}
+
+// Signing details live in android/keystore.properties, which is never committed.
+def keystoreProps = new Properties()
+def keystorePropsFile = rootProject.file('keystore.properties')
+if (keystorePropsFile.exists()) {
+    keystorePropsFile.withInputStream { keystoreProps.load(it) }
+}
+
+android {
+    namespace = 'app.vercel.daynotes_nu.twa'
+    compileSdk = 36
+
+    defaultConfig {
+        applicationId = 'app.vercel.daynotes_nu.twa'
+        minSdk = 24
+        targetSdk = 36
+        versionCode = 1
+        versionName = '1.0.0'
+    }
+
+    signingConfigs {
+        release {
+            if (keystorePropsFile.exists()) {
+                storeFile = rootProject.file(keystoreProps['storeFile'])
+                storePassword = keystoreProps['storePassword']
+                keyAlias = keystoreProps['keyAlias']
+                keyPassword = keystoreProps['keyPassword']
+            }
+        }
+    }
+
+    buildTypes {
+        release {
+            signingConfig = signingConfigs.release
+        }
+    }
+}
+
+dependencies {
+    implementation 'com.google.androidbrowserhelper:androidbrowserhelper:2.8.0'
+}

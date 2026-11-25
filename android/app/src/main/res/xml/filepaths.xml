@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<paths>
+    <!-- android-browser-helper hands the splash image to Chrome through this folder. -->
+    <files-path
+        name="twa_splash"
+        path="twa_splash/" />
+</paths>
