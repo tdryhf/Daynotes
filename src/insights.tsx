@@ -127,7 +127,7 @@ export function InsightsPage({ records, habits, notes, reflections, onSaveReflec
       <div className="insights-stat-grid">
         <article className="insights-stat insights-stat-primary"><span>Goal pace</span><strong>{metrics.elapsedDays ? `${metrics.completionPercent}%` : "—"}</strong><small>{metrics.elapsedDays ? `${countLabel(metrics.completedCount)} of ${countLabel(metrics.plannedToDate)} planned check-ins so far` : "Your selected period has not started"}</small><div className="insights-progress-track" aria-hidden="true"><span style={{ width: `${metrics.completionPercent}%` }} /></div></article>
         <article className="insights-stat"><span>Completed check-ins</span><strong>{metrics.completedCount}</strong><small>{countLabel(metrics.plannedInRange)} planned across the full date window</small></article>
-        <article className="insights-stat"><span>Active days</span><strong>{metrics.elapsedDays ? `${metrics.activeDays}<small> / ${metrics.elapsedDays}</small>` : "—"}</strong><small>{metrics.elapsedDays ? `${metrics.activeDayPercent}% of elapsed days had a check-in` : "Starts when the period begins"}</small></article>
+        <article className="insights-stat"><span>Active days</span><strong>{metrics.elapsedDays ? <>{metrics.activeDays}<small> / {metrics.elapsedDays}</small></> : "—"}</strong><small>{metrics.elapsedDays ? `${metrics.activeDayPercent}% of elapsed days had a check-in` : "Starts when the period begins"}</small></article>
         <article className="insights-stat"><span>Best streak</span><strong>{metrics.bestStreak}<small> days</small></strong><small>{metrics.currentStreak ? `${metrics.currentStreak} day current streak` : "Longest run in the selected period"}</small></article>
       </div>
     </section>

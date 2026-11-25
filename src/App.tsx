@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type FormEvent } from "react";
+import { useEffect, useRef, useState, type CSSProperties, type FormEvent } from "react";
 import {
   CalendarDays, Check, ChevronDown, ChevronLeft, ChevronRight, Clock3, Bell, Target, TrendingUp,
   Cloud, CloudOff, Download, FileUp, Heart, Home, Lightbulb, ListChecks, Menu,
@@ -118,10 +118,24 @@ function App() {
 
   useEffect(() => {
     const media = window.matchMedia("(max-width: 760px)");
-    const updateViewport = () => setMobileViewport(media.matches);
+    const updateViewport = () => {
+      setMobileViewport(media.matches);
+      if (!media.matches) setMobileMenuOpen(false);
+    };
     media.addEventListener("change", updateViewport);
     return () => media.removeEventListener("change", updateViewport);
   }, []);
+
+  useEffect(() => {
+    if (!mobileMenuOpen) return;
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key !== "Escape") return;
+      setMobileMenuOpen(false);
+      document.querySelector<HTMLButtonElement>(".menu-toggle")?.focus();
+    };
+    window.addEventListener("keydown", closeOnEscape);
+    return () => window.removeEventListener("keydown", closeOnEscape);
+  }, [mobileMenuOpen]);
 
   useEffect(() => {
     setStorageFull(!saveLocalRecords(records));
@@ -454,7 +468,7 @@ function App() {
     <div className="app-shell">
       <a className="skip-link" href="#main-content">Skip to today</a>
       <header className="topbar">
-        <button className="menu-toggle icon-button" onClick={() => setMobileMenuOpen((open) => !open)} aria-label={mobileMenuOpen ? "Close navigation" : "Open navigation"} aria-expanded={mobileMenuOpen}><Menu size={20} /></button>
+        <button className="menu-toggle icon-button" onClick={() => setMobileMenuOpen((open) => !open)} aria-label={mobileMenuOpen ? "Close navigation" : "Open navigation"} aria-expanded={mobileMenuOpen}>{mobileMenuOpen ? <X size={20} /> : <Menu size={20} />}</button>
         <button className="wordmark" onClick={() => chooseView("today")} aria-label="Daybook home"><span className="wordmark-stamp"><Heart size={17} fill="currentColor" /></span><span>daybook</span></button>
         <div className="topbar-spacer" />
         {sampleData && <span className="sample-chip"><Sparkles size={13} /> Sample</span>}
@@ -480,6 +494,7 @@ function App() {
             <div className="rail-reminder"><span className="reminder-dot" /><span>Open to anyone with the link</span></div>
           </div>
         </aside>
+        {mobileViewport && mobileMenuOpen && <div className="rail-scrim" aria-hidden="true" onClick={() => setMobileMenuOpen(false)} />}
 
         <main id="main-content" className="main-content">
           <div className="page-heading">
@@ -499,7 +514,7 @@ function App() {
             </div>
           </div>
 
-          {view === "today" && <TodayPage habits={habits} records={records} tasks={dueToday} goals={goals} onToggle={toggleCheckin} onTimer={(habit) => { setTimerHabit(habit); setTimerSeconds((habit.minutes || 20) * 60); setTimerMinutes(habit.minutes || 20); setTimerRunning(false); }} onAdd={() => setDialog("habit")} onNavigate={chooseView} onHabitClick={setDetailHabit} completedToday={completedToday} celebrateAllHabits={celebrateAllHabits} />}
+          {view === "today" && <TodayPage habits={habits} records={records} tasks={dueToday} goals={goals} onToggle={toggleCheckin} onTimer={(habit) => { setTimerHabit(habit); setTimerSeconds((habit.minutes || 20) * 60); setTimerMinutes(habit.minutes || 20); setTimerRunning(false); }} onAdd={() => setDialog("habit")} onNavigate={chooseView} onHabitClick={setDetailHabit} celebrateAllHabits={celebrateAllHabits} />}
           {view === "insights" && <InsightsPage records={records} habits={habits} notes={notes} reflections={reflections} onSaveReflection={savePerformanceReflection} onAddHabit={() => setDialog("habit")} />}
           {view === "habits" && <HabitsPage habits={habits} goals={goals} records={records} month={month} setMonth={setMonth} mode={matrixMode} setMode={setMatrixMode} onToggle={toggleCheckin} onAdd={() => setDialog("habit")} onRemove={deleteHabit} onHabitClick={setDetailHabit} />}
           {view === "tasks" && <TasksPage tasks={tasks} goals={goals} notes={notes} filter={taskFilter} setFilter={setTaskFilter} categoryFilter={taskCategoryFilter} setCategoryFilter={setTaskCategoryFilter} onToggle={toggleTask} onDelete={deleteTask} onAdd={() => setDialog("task")} onTaskClick={setDetailTask} />}
@@ -555,32 +570,56 @@ function pageSubtitle(view: View) {
   return subtitles[view];
 }
 
-function TodayPage({ habits, records, tasks, goals, onToggle, onTimer, onAdd, onNavigate, onHabitClick, completedToday, celebrateAllHabits }: {
-  habits: Habit[]; records: AppRecord[]; tasks: Task[]; goals: Goal[]; onToggle: (habit: Habit, date: Date) => void; onTimer: (habit: Habit) => void; onAdd: () => void; onNavigate: (view: View) => void; onHabitClick: (habit: Habit) => void; completedToday: number; celebrateAllHabits: boolean;
+function TodayPage({ habits, records, tasks, goals, onToggle, onTimer, onAdd, onNavigate, onHabitClick, celebrateAllHabits }: {
+  habits: Habit[]; records: AppRecord[]; tasks: Task[]; goals: Goal[]; onToggle: (habit: Habit, date: Date) => void; onTimer: (habit: Habit) => void; onAdd: () => void; onNavigate: (view: View) => void; onHabitClick: (habit: Habit) => void; celebrateAllHabits: boolean;
 }) {
-  const today = new Date();
-  const todayCheck = (habitId: string) => records.some((record) => record.type === "checkin" && record.habitId === habitId && record.date === todayKey() && record.completed && !record.deletedAt);
+  // The check-in list can be stepped back to an earlier day to fill in habits that were missed.
+  // A remembered past day stays put; anything that is not in the past shows today.
+  const [pastDay, setPastDay] = useState<string | null>(null);
+  const currentKey = todayKey();
+  const shownKey = pastDay && pastDay < currentKey ? pastDay : currentKey;
+  const isToday = shownKey === currentKey;
+  const shownDate = parseDate(shownKey);
+  const yesterday = parseDate(currentKey);
+  yesterday.setDate(yesterday.getDate() - 1);
+  const dayName = isToday ? "Today" : shownKey === dateKey(yesterday) ? "Yesterday" : dateLabel(shownKey);
+  const stepDay = (offset: number) => {
+    const next = parseDate(shownKey);
+    next.setDate(next.getDate() + offset);
+    const key = dateKey(next);
+    setPastDay(key < todayKey() ? key : null);
+  };
+  const isChecked = (habitId: string) => records.some((record) => record.type === "checkin" && record.habitId === habitId && record.date === shownKey && record.completed && !record.deletedAt);
+  const completedOnDay = habits.filter((habit) => isChecked(habit.id)).length;
+  const inCurrentPeriod = (habit: Habit) => habit.cadence === "month" ? shownKey.slice(0, 7) === currentKey.slice(0, 7) : weekDates(shownDate).some((date) => dateKey(date) === currentKey);
   const upcoming = uniqueFamilyDates(liveRecords(records, "date").filter((item) => item.date >= todayKey()))
     .sort((a, b) => a.date.localeCompare(b.date) || (a.time ?? "").localeCompare(b.time ?? "") || a.title.localeCompare(b.title))
     .slice(0, 2);
   return <div className="today-layout">
     <section className="today-ledger paper-sheet" aria-labelledby="today-habits-heading">
-      <div className="ledger-topline"><div><h2 id="today-habits-heading">Your daily check-in</h2><p>Pick up wherever you are.</p></div><span className="day-stamp" aria-label={`${completedToday} of ${habits.length} habits done today`}><span className="day-stamp-count"><strong>{completedToday}</strong><span>/ {habits.length}</span></span><span className="day-stamp-label">done</span></span></div>
+      <div className="ledger-topline"><div><h2 id="today-habits-heading">Your daily check-in</h2><p>{isToday ? "Pick up wherever you are." : `Filling in ${dayName === "Yesterday" ? "yesterday" : dayName}. Changes count for that day.`}</p></div><span className="day-stamp" aria-label={`${completedOnDay} of ${habits.length} habits done ${isToday ? "today" : dayName === "Yesterday" ? "yesterday" : `on ${dayName}`}`}><span className="day-stamp-count"><strong>{completedOnDay}</strong><span>/ {habits.length}</span></span><span className="day-stamp-label">done</span></span></div>
+      {habits.length > 0 && <div className={`day-stepper ${isToday ? "" : "is-past"}`} role="group" aria-label="Day to check in">
+        <button className="icon-button" onClick={() => stepDay(-1)} aria-label="Previous day"><ChevronLeft size={18} /></button>
+        <span className="day-stepper-label" aria-live="polite"><strong>{dayName}</strong>{dayName !== dateLabel(shownKey) && <span>{dateLabel(shownKey)}</span>}</span>
+        <button className="icon-button" onClick={() => stepDay(1)} disabled={isToday} aria-label="Next day"><ChevronRight size={18} /></button>
+        {!isToday && <button className="text-link day-stepper-reset" onClick={() => setPastDay(null)}>Back to today</button>}
+      </div>}
       <div className="daily-list">
         {habits.length === 0 && <EmptyState text="Your habit page is blank." detail="Add one small thing you would like to do more often." action="Add a habit" onClick={onAdd} />}
         {habits.slice(0, 8).map((habit) => {
-          const complete = todayCheck(habit.id);
-          const progress = countCadence(records, habit, today);
+          const complete = isChecked(habit.id);
+          const progress = countCadence(records, habit, shownDate);
+          const period = `${inCurrentPeriod(habit) ? "this" : "that"} ${habit.cadence === "month" ? "month" : "week"}`;
           return <div className={`daily-row ${complete ? "is-complete" : ""}`} key={habit.id}>
-            <button className="check-button" onClick={() => onToggle(habit, today)} aria-label={`${complete ? "Uncheck" : "Check off"} ${habit.name}`} aria-pressed={complete}><Check size={15} /></button>
-            <span className="daily-habit-copy"><button className="daily-habit-name habit-detail-trigger" onClick={() => onHabitClick(habit)}>{habit.name}</button>{habit.nonNegotiable && <span className="non-negotiable-badge">Non-negotiable</span>}{goals.filter((goal) => habit.goalIds?.includes(goal.id)).map((goal) => <span className="connected-goal-tag" key={goal.id}><Target size={11}/>{goal.title}</span>)}</span>
-            {habit.minutes && <button className="timer-link" onClick={() => onTimer(habit)}><Timer size={14} /><span>{habit.minutes} min</span></button>}
-            <span className="goal-progress"><strong>{progress}</strong> / {habit.goal}<span className="goal-cadence">{habit.cadence === "month" ? "this month" : "this week"}</span></span>
+            <button className="check-button" onClick={() => onToggle(habit, shownDate)} aria-label={`${complete ? "Uncheck" : "Check off"} ${habit.name}${isToday ? "" : ` for ${dayName === "Yesterday" ? "yesterday" : dayName}`}`} aria-pressed={complete}><Check size={15} /></button>
+            <span className="daily-habit-copy"><button className="daily-habit-name habit-detail-trigger" onClick={() => onHabitClick(habit)}>{habit.name}</button>{habit.nonNegotiable && <span className="non-negotiable-badge">Non-negotiable</span>}{goals.filter((goal) => habit.goalIds?.includes(goal.id)).map((goal) => <span className="connected-goal-tag" key={goal.id} title={goal.title}><Target size={11}/><span>{goal.title}</span></span>)}</span>
+            {habit.minutes && isToday && <button className="timer-link" onClick={() => onTimer(habit)}><Timer size={14} /><span>{habit.minutes} min</span></button>}
+            <span className="goal-progress"><strong>{progress}</strong> / {habit.goal}<span className="goal-cadence">{period}</span></span>
           </div>;
         })}
         {habits.length > 8 && <button className="text-link more-link" onClick={() => onNavigate("habits")}>See all {habits.length} habits <ChevronRight size={15} /></button>}
       </div>
-      {habits.length > 0 && completedToday === habits.length && <div className={`all-habits-badge ${celebrateAllHabits ? "is-celebrating" : ""}`} role="status" aria-live="polite"><span className="all-habits-medal"><Sparkles size={19} /></span><span><strong>All habits complete!</strong><small>That’s a full day of showing up. Let it count.</small></span><span className="badge-sparkle badge-sparkle-one" aria-hidden="true">✦</span><span className="badge-sparkle badge-sparkle-two" aria-hidden="true">✦</span></div>}
+      {habits.length > 0 && completedOnDay === habits.length && <div className={`all-habits-badge ${isToday && celebrateAllHabits ? "is-celebrating" : ""}`} role="status" aria-live="polite"><span className="all-habits-medal"><Sparkles size={19} /></span><span><strong>All habits complete!</strong><small>{isToday ? "That’s a full day of showing up. Let it count." : `Every habit is marked for ${dayName === "Yesterday" ? "yesterday" : dayName}.`}</small></span><span className="badge-sparkle badge-sparkle-one" aria-hidden="true">✦</span><span className="badge-sparkle badge-sparkle-two" aria-hidden="true">✦</span></div>}
       <div className="sheet-footer"><span>One day at a time is plenty.</span><button className="text-link" onClick={() => onNavigate("habits")}>Open the habit calendar <ChevronRight size={15} /></button></div>
     </section>
     <aside className="today-aside">
@@ -608,18 +647,30 @@ function HabitsPage({ habits, goals, records, month, setMonth, mode, setMode, on
   const dates = mode === "week" ? weekDates(new Date()) : monthDates(month);
   const onMonthChange = (offset: number) => setMonth(new Date(month.getFullYear(), month.getMonth() + offset, 1, 12));
   const hasCheckin = (habit: Habit, date: Date) => records.some((record) => record.type === "checkin" && record.habitId === habit.id && record.date === dateKey(date) && record.completed && !record.deletedAt);
+  // On a narrow screen the month runs off to the right. When today's column is out of view, slide it in with a couple of days of context.
+  const scrollRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    const scroller = scrollRef.current;
+    if (!scroller) return;
+    const todayHead = scroller.querySelector<HTMLElement>("thead .today-column");
+    if (!todayHead) { scroller.scrollLeft = 0; return; }
+    const nameWidth = scroller.querySelector<HTMLElement>(".habit-name-head")?.offsetWidth ?? 0;
+    const left = todayHead.offsetLeft - scroller.scrollLeft;
+    if (left >= nameWidth && left + todayHead.offsetWidth <= scroller.clientWidth) return;
+    scroller.scrollLeft = Math.max(0, todayHead.offsetLeft - nameWidth - todayHead.offsetWidth * 2);
+  }, [mode, month]);
   return <section className="habit-workspace paper-sheet">
     <div className="calendar-toolbar">
       <div className="month-controls"><button className="icon-button" aria-label="Previous month" onClick={() => onMonthChange(-1)}><ChevronLeft size={19} /></button><h2>{monthLabel(month)}</h2><button className="icon-button" aria-label="Next month" onClick={() => onMonthChange(1)}><ChevronRight size={19} /></button></div>
       <div className="view-switch" role="group" aria-label="Calendar range"><button className={mode === "week" ? "selected" : ""} onClick={() => setMode("week")}>Week</button><button className={mode === "month" ? "selected" : ""} onClick={() => setMode("month")}>Month</button></div>
     </div>
-    <div className={`calendar-scroll ${mode === "month" ? "is-month" : ""}`} tabIndex={0} aria-label={`${mode} habit calendar, scroll horizontally to see all days`}>
-      <table className="habit-table">
+    <div className={`calendar-scroll ${mode === "month" ? "is-month" : ""}`} ref={scrollRef} tabIndex={0} aria-label={`${mode} habit calendar, scroll horizontally to see all days`}>
+      <table className="habit-table" style={{ "--days": dates.length } as CSSProperties}>
         <thead><tr><th className="habit-name-head" scope="col">Habit</th>{dates.map((date) => <th scope="col" key={dateKey(date)} className={dateKey(date) === todayKey() ? "today-column" : ""}><span>{date.toLocaleDateString(undefined, { weekday: "short" })}</span><strong>{date.getDate()}</strong></th>)}</tr></thead>
         <tbody>{habits.map((habit) => {
           const count = countCadence(records, habit, month);
           return <tr key={habit.id}>
-            <th scope="row" className="habit-name-cell"><div className="habit-row-content"><div><span className="habit-title-line"><button className="habit-name-label habit-detail-trigger" onClick={() => onHabitClick(habit)}>{habit.name}</button>{habit.nonNegotiable && <span className="non-negotiable-badge">Non-negotiable</span>}</span><span className="habit-goal-label">{count} of {habit.goal} {habit.cadence === "month" ? "this month" : "this week"}</span>{goals.filter((goal) => habit.goalIds?.includes(goal.id)).map((goal) => <span className="connected-goal-tag" key={goal.id}><Target size={11}/>{goal.title}</span>)}</div><button className="habit-remove" onClick={() => onRemove(habit)} aria-label={`Remove habit ${habit.name}`} title={`Remove ${habit.name}`}><Trash2 size={14} /></button></div></th>
+            <th scope="row" className="habit-name-cell"><div className="habit-row-content"><div><span className="habit-title-line"><button className="habit-name-label habit-detail-trigger" onClick={() => onHabitClick(habit)}>{habit.name}</button>{habit.nonNegotiable && <span className="non-negotiable-badge">Non-negotiable</span>}</span><span className="habit-goal-label">{count} of {habit.goal} {habit.cadence === "month" ? "this month" : "this week"}</span>{goals.filter((goal) => habit.goalIds?.includes(goal.id)).map((goal) => <span className="connected-goal-tag" key={goal.id} title={goal.title}><Target size={11}/><span>{goal.title}</span></span>)}</div><button className="habit-remove" onClick={() => onRemove(habit)} aria-label={`Remove habit ${habit.name}`} title={`Remove ${habit.name}`}><Trash2 size={14} /></button></div></th>
             {dates.map((date) => {
               const complete = hasCheckin(habit, date);
               const isFuture = dateKey(date) > todayKey();
@@ -645,7 +696,7 @@ function TasksPage({ tasks, goals, notes, filter, setFilter, categoryFilter, set
     <div className="task-list">
       {shown.map((task) => <div className={`task-row ${task.completed ? "is-complete" : ""}`} key={task.id}>
         <button className="check-button" aria-label={`${task.completed ? "Reopen" : "Complete"}: ${task.title}`} aria-pressed={task.completed} onClick={() => onToggle(task)}><Check size={15} /></button>
-        <div className="task-main"><TaskTitleButton task={task} noteCount={notes.filter((note) => note.ownerType === "task" && note.ownerId === task.id).length} onClick={() => onTaskClick(task)} />{task.category && <span className="task-category-badge">{task.category}</span>}{goals.filter((goal) => task.goalIds?.includes(goal.id)).map((goal) => <span className="connected-goal-tag" key={goal.id}><Target size={11}/>{goal.title}</span>)}</div>
+        <div className="task-main"><TaskTitleButton task={task} noteCount={notes.filter((note) => note.ownerType === "task" && note.ownerId === task.id).length} onClick={() => onTaskClick(task)} />{task.category && <span className="task-category-badge">{task.category}</span>}{goals.filter((goal) => task.goalIds?.includes(goal.id)).map((goal) => <span className="connected-goal-tag" key={goal.id} title={goal.title}><Target size={11}/><span>{goal.title}</span></span>)}</div>
         {task.assignee && <span className="assignee-tag">{task.assignee}</span>}
         {task.dueDate && <time className={`task-date ${task.dueDate < todayKey() && !task.completed ? "is-late" : ""}`} dateTime={task.dueDate}>{dateLabel(task.dueDate, { month: "short", day: "numeric" })}</time>}
         <button className="row-delete" onClick={() => onDelete(task)} aria-label={`Remove to-do ${task.title}`} title={`Remove ${task.title}`}><Trash2 size={15} /></button>
