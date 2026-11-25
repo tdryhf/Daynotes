@@ -1,0 +1,12 @@
+[
+  {
+    "relation": ["delegate_permission/common.handle_all_urls"],
+    "target": {
+      "namespace": "android_app",
+      "package_name": "app.vercel.daynotes_nu.twa",
+      "sha256_cert_fingerprints": [
+        "00:78:F1:D8:22:5D:E7:CD:89:62:D5:91:7D:42:DE:71:E5:E4:3E:28:43:A1:C4:5F:F2:B4:4D:8A:E1:27:4E:4D"
+      ]
+    }
+  }
+]
