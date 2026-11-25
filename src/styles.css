@@ -887,7 +887,16 @@ button:not(:disabled):active { translate: 0 1px; }
 .assistant-message { max-width: 88%; padding: var(--space-sm) var(--space-md); border-radius: 13px; background: var(--color-card); box-shadow: 0 1px 3px color-mix(in oklab, var(--color-ink) 7%, transparent); }
 .assistant-message.is-user { align-self: end; background: color-mix(in oklab, var(--color-mint) 48%, var(--color-card)); }
 .assistant-message > span { color: var(--color-muted); font-size: .62rem; font-weight: 650; }
-.assistant-message > p { margin-top: 3px; font-size: .8rem; line-height: 1.5; white-space: pre-wrap; }
+.assistant-message > p, .assistant-reply { margin-top: 3px; font-size: .8rem; line-height: 1.5; white-space: pre-wrap; }
+.assistant-reply { display: flex; flex-direction: column; gap: var(--space-xs); }
+/* A reply with a table gets the whole transcript width so the columns have room. */
+.assistant-message:has(.reply-table-wrap) { max-width: 100%; }
+.reply-table-wrap { max-width: 100%; overflow-x: auto; border: 1px solid var(--color-rule); border-radius: var(--radius-10); background: var(--color-card); }
+.reply-table { min-width: 100%; border-collapse: collapse; font-size: var(--text-xs); line-height: 1.4; font-variant-numeric: tabular-nums; white-space: normal; }
+.reply-table th, .reply-table td { padding: var(--space-2xs) var(--space-sm); text-align: left; vertical-align: top; white-space: pre-line; }
+.reply-table th { border-bottom: 1px solid var(--color-rule); background: var(--color-paper-2); color: var(--color-ink-2); font-weight: 650; }
+.reply-table td { border-top: 1px solid var(--color-rule); }
+.reply-table tbody tr:first-child td { border-top: 0; }
 .assistant-status { color: var(--color-muted); font-size: .72rem; font-style: italic; }
 .assistant-composer { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: end; gap: var(--space-xs); margin-top: var(--space-sm); }
 .assistant-composer .textarea-control { min-height: 52px; max-height: 150px; }
@@ -1017,6 +1026,7 @@ button:not(:disabled):active { translate: 0 1px; }
   .assistant-settings { align-items: start; flex-direction: column; }
   .assistant-dialog { padding: var(--space-md); }
   .assistant-transcript { min-height: 220px; max-height: 43vh; }
+  .reply-table th, .reply-table td { padding: var(--space-2xs) var(--space-xs); }
   .habit-details-dialog .dialog-actions, .task-details-dialog .dialog-actions { margin-inline: calc(var(--space-neg-md)); padding-inline: var(--space-md); }
   .note-composer-footer { align-items: start; flex-wrap: wrap; }
   .note-date-field { width: 145px; }
