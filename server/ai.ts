@@ -31,8 +31,47 @@ export function checkAiRateLimit(clientKey: string) {
 // JSON mode now and then fails to produce valid JSON ("json_validate_failed"); the same request usually works when sent again.
 const JSON_ATTEMPTS = 3;
 
+// Groq answers 429 when the per-minute request or token limit is used up. The limit usually frees up within a few
+// seconds, so wait as long as Groq says and send the request again. Stop once the waiting would run past this
+// budget (it has to fit inside the function's maxDuration in vercel.json), or when Groq asks for a longer wait than
+// the budget allows, which means a daily limit was hit.
+const RATE_LIMIT_BUDGET_MS = 40_000;
+const RATE_LIMIT_FALLBACK_WAIT_MS = 2_000;
+const RATE_LIMIT_PADDING_MS = 250;
+
+// Reads Groq's "Please try again in 1m2.5s" (also "450ms", "7.66s", "1h3m") as milliseconds.
+function retryAfterFromMessage(message: string) {
+  const match = /try again in ((?:\d+(?:\.\d+)?(?:ms|h|m|s))+)/i.exec(message);
+  if (!match) return undefined;
+  const scale: Record<string, number> = { ms: 1, s: 1_000, m: 60_000, h: 3_600_000 };
+  let total = 0;
+  for (const [, amount, unit] of match[1].matchAll(/(\d+(?:\.\d+)?)(ms|h|m|s)/gi)) total += Number(amount) * scale[unit.toLowerCase()];
+  return total;
+}
+
+function rateLimitWait(response: Response, message: string) {
+  const fromMessage = retryAfterFromMessage(message);
+  if (fromMessage !== undefined) return fromMessage + RATE_LIMIT_PADDING_MS;
+  const header = Number(response.headers.get("retry-after"));
+  if (Number.isFinite(header) && header >= 0) return header * 1_000 + RATE_LIMIT_PADDING_MS;
+  return RATE_LIMIT_FALLBACK_WAIT_MS;
+}
+
+function describeWait(ms: number) {
+  const minutes = Math.ceil(ms / 60_000);
+  if (minutes <= 1) return "a minute";
+  if (minutes < 60) return `about ${minutes} minutes`;
+  const hours = Math.round(minutes / 60);
+  return hours === 1 ? "about an hour" : `about ${hours} hours`;
+}
+
+export class AiRateLimitError extends Error {}
+
+const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
 async function completion(apiKey: string, messages: AiMessage[], useTools = false) {
-  for (let attempt = 1; ; attempt += 1) {
+  const startedAt = Date.now();
+  for (let attempt = 1; ; ) {
     const response = await fetch("https://api.groq.com/openai/v1/chat/completions", {
       method: "POST",
       headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
@@ -43,9 +82,20 @@ async function completion(apiKey: string, messages: AiMessage[], useTools = fals
       }),
     });
     const payload = await response.json().catch(() => ({})) as { choices?: Array<{ message?: Record<string, unknown> }>; error?: { message?: string; code?: string } };
+    if (response.status === 429) {
+      const wait = rateLimitWait(response, payload.error?.message ?? "");
+      const remaining = RATE_LIMIT_BUDGET_MS - (Date.now() - startedAt);
+      if (wait > remaining) {
+        throw new AiRateLimitError(wait > RATE_LIMIT_BUDGET_MS
+          ? `The AI has hit its usage limit for now. Please try again in ${describeWait(wait)}.`
+          : "The AI is still busy after several tries. Please try again in a moment.");
+      }
+      await sleep(wait);
+      continue;
+    }
     const invalidJson = payload.error?.code === "json_validate_failed" || /^Failed to (generate|validate) JSON/.test(payload.error?.message ?? "");
     if (!response.ok && !useTools && invalidJson) {
-      if (attempt < JSON_ATTEMPTS) continue;
+      if (attempt < JSON_ATTEMPTS) { attempt += 1; continue; }
       throw new Error("The AI couldn't put a reply together. Please try again.");
     }
     if (!response.ok) throw new Error(payload.error?.message || `Groq returned ${response.status}.`);
@@ -165,6 +215,7 @@ export async function handleAiRequest(body: AiBody, apiKey: string | undefined, 
     }
     return { status: 404, body: { error: "Unknown AI request." } };
   } catch (error) {
+    if (error instanceof AiRateLimitError) return { status: 429, body: { error: error.message } };
     return { status: 502, body: { error: error instanceof Error ? error.message : "The AI service could not complete that request." } };
   }
 }
