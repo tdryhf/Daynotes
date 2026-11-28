@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { calculatePerformanceMetrics, calculateRecentProgress, dateKey, mergeRecords, monthCheckinCount } from "./data";
+import { calculatePerformanceMetrics, calculateRecentProgress, dateKey, habitStreak, mergeRecords, monthCheckinCount } from "./data";
 import type { AppRecord } from "./types";
 
 describe("daybook record helpers", () => {
@@ -21,6 +21,20 @@ describe("daybook record helpers", () => {
       { id: "h:4", type: "checkin", habitId: "h", date: "2026-11-03", completed: true, updatedAt: 4, deletedAt: 5 },
     ];
     expect(monthCheckinCount(records, "h", new Date(2026, 10, 11))).toBe(1);
+  });
+
+  it("counts a habit's run of days in a row, keeping yesterday's run until today is over", () => {
+    const checkin = (date: string, extra: Partial<AppRecord> = {}): AppRecord => ({ id: `h:${date}`, type: "checkin", habitId: "h", date, completed: true, updatedAt: 1, ...extra } as AppRecord);
+    const records: AppRecord[] = [
+      checkin("2026-11-01"), checkin("2026-10-31"), checkin("2026-10-30"),
+      checkin("2026-10-28"),
+      { id: "other:2026-11-02", type: "checkin", habitId: "other", date: "2026-11-02", completed: true, updatedAt: 1 },
+    ];
+    expect(habitStreak(records, "h", new Date(2026, 10, 1, 9))).toBe(3);
+    expect(habitStreak(records, "h", new Date(2026, 10, 2, 9))).toBe(3);
+    expect(habitStreak([...records, checkin("2026-11-02")], "h", new Date(2026, 10, 2, 9))).toBe(4);
+    expect(habitStreak(records, "h", new Date(2026, 10, 3, 9))).toBe(0);
+    expect(habitStreak([checkin("2026-11-02", { completed: false }), checkin("2026-11-01", { deletedAt: 2 })], "h", new Date(2026, 10, 2, 9))).toBe(0);
   });
 
   it("builds a seven-day trend and cadence goal progress from live check-ins", () => {

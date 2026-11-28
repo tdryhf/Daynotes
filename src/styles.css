@@ -117,6 +117,8 @@ button:not(:disabled):active { translate: 0 1px; }
 .connected-goal-tag svg { flex: 0 0 auto; color: var(--color-mint-deep); }
 .connected-goal-tag > span { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 .non-negotiable-badge { display: inline-flex; align-items: center; padding: 2px 7px; border-radius: 999px; background: color-mix(in oklab, var(--color-accent-3) 32%, var(--color-card)); color: var(--color-ink-2); font-size: .64rem; font-weight: 650; line-height: 1.4; white-space: nowrap; }
+.streak-badge { display: inline-flex; align-items: center; gap: 2px; padding: 2px 7px 2px 5px; border-radius: 999px; background: color-mix(in oklab, var(--color-accent) 45%, var(--color-card)); color: var(--color-ink-2); font-size: .64rem; font-weight: 700; font-variant-numeric: tabular-nums; line-height: 1.4; white-space: nowrap; }
+.streak-badge svg { flex: 0 0 auto; color: var(--color-accent-3); fill: color-mix(in oklab, var(--color-accent-3) 35%, transparent); }
 .daily-row.is-complete .daily-habit-name { color: var(--color-muted); text-decoration: line-through; text-decoration-thickness: 1px; text-decoration-color: var(--color-edge); }
 .daily-row.is-complete .daily-habit-name, .task-row.is-complete .task-title { color: var(--color-muted); text-decoration: line-through; text-decoration-thickness: 1px; text-decoration-color: var(--color-edge); }
 .timer-link { display: inline-flex; min-width: 58px; min-height: 36px; align-items: center; justify-content: center; gap: var(--space-2xs); padding: 0 var(--space-xs); border: 0; border-radius: var(--radius-10); background: transparent; color: var(--color-muted); font-size: .72rem; white-space: nowrap; }

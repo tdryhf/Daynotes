@@ -1,10 +1,10 @@
 import { useEffect, useRef, useState, type CSSProperties, type FormEvent } from "react";
 import {
   CalendarDays, Check, ChevronDown, ChevronLeft, ChevronRight, Clock3, Bell, Target, TrendingUp,
-  Cloud, CloudOff, Download, FileUp, Heart, Home, Lightbulb, ListChecks, Menu,
+  Cloud, CloudOff, Download, FileUp, Flame, Heart, Home, Lightbulb, ListChecks, Menu,
   NotebookPen, Plus, Settings, Share2, Sparkles, Timer, Trash2, X,
 } from "lucide-react";
-import { dateKey, hasSampleRecords, isAppRecord, liveRecords, loadLocalRecords, mergeRecords, monthCheckinCount, saveLocalRecords, STORAGE_KEY } from "./data";
+import { dateKey, habitStreak, hasSampleRecords, isAppRecord, liveRecords, loadLocalRecords, mergeRecords, monthCheckinCount, saveLocalRecords, STORAGE_KEY } from "./data";
 import { cloudConfigured } from "./sync";
 import { sameRecords, useCloudSync, type SyncState } from "./useCloudSync";
 import { JournalPage } from "./journal";
@@ -62,6 +62,14 @@ const countCadence = (records: AppRecord[], habit: Habit, date: Date) => {
   const keys = habit.cadence === "month" ? monthDates(date).map(dateKey) : weekDates(date).map(dateKey);
   return records.filter((record) => record.type === "checkin" && record.habitId === habit.id && record.completed && keys.includes(record.date) && !record.deletedAt).length;
 };
+
+/** A small flame with the habit's current run of days in a row. Hidden until there is a run to show. */
+function StreakBadge({ records, habit }: { records: AppRecord[]; habit: Habit }) {
+  const days = habitStreak(records, habit.id);
+  if (!days) return null;
+  const label = `${days}-day streak`;
+  return <span className="streak-badge" title={`${days} day${days === 1 ? "" : "s"} in a row`}><Flame size={11} aria-hidden="true" /><span aria-hidden="true">{days}</span><span className="visually-hidden">{label}</span></span>;
+}
 
 type DialogKind = "habit" | "task" | "goal" | "tracker" | "reminder" | "idea" | "date" | "journal" | null;
 
@@ -612,7 +620,7 @@ function TodayPage({ habits, records, tasks, goals, onToggle, onTimer, onAdd, on
           const period = `${inCurrentPeriod(habit) ? "this" : "that"} ${habit.cadence === "month" ? "month" : "week"}`;
           return <div className={`daily-row ${complete ? "is-complete" : ""}`} key={habit.id}>
             <button className="check-button" onClick={() => onToggle(habit, shownDate)} aria-label={`${complete ? "Uncheck" : "Check off"} ${habit.name}${isToday ? "" : ` for ${dayName === "Yesterday" ? "yesterday" : dayName}`}`} aria-pressed={complete}><Check size={15} /></button>
-            <span className="daily-habit-copy"><button className="daily-habit-name habit-detail-trigger" onClick={() => onHabitClick(habit)}>{habit.name}</button>{habit.nonNegotiable && <span className="non-negotiable-badge">Non-negotiable</span>}{goals.filter((goal) => habit.goalIds?.includes(goal.id)).map((goal) => <span className="connected-goal-tag" key={goal.id} title={goal.title}><Target size={11}/><span>{goal.title}</span></span>)}</span>
+            <span className="daily-habit-copy"><button className="daily-habit-name habit-detail-trigger" onClick={() => onHabitClick(habit)}>{habit.name}</button><StreakBadge records={records} habit={habit} />{habit.nonNegotiable && <span className="non-negotiable-badge">Non-negotiable</span>}{goals.filter((goal) => habit.goalIds?.includes(goal.id)).map((goal) => <span className="connected-goal-tag" key={goal.id} title={goal.title}><Target size={11}/><span>{goal.title}</span></span>)}</span>
             {habit.minutes && isToday && <button className="timer-link" onClick={() => onTimer(habit)}><Timer size={14} /><span>{habit.minutes} min</span></button>}
             <span className="goal-progress"><strong>{progress}</strong> / {habit.goal}<span className="goal-cadence">{period}</span></span>
           </div>;
@@ -670,7 +678,7 @@ function HabitsPage({ habits, goals, records, month, setMonth, mode, setMode, on
         <tbody>{habits.map((habit) => {
           const count = countCadence(records, habit, month);
           return <tr key={habit.id}>
-            <th scope="row" className="habit-name-cell"><div className="habit-row-content"><div><span className="habit-title-line"><button className="habit-name-label habit-detail-trigger" onClick={() => onHabitClick(habit)}>{habit.name}</button>{habit.nonNegotiable && <span className="non-negotiable-badge">Non-negotiable</span>}</span><span className="habit-goal-label">{count} of {habit.goal} {habit.cadence === "month" ? "this month" : "this week"}</span>{goals.filter((goal) => habit.goalIds?.includes(goal.id)).map((goal) => <span className="connected-goal-tag" key={goal.id} title={goal.title}><Target size={11}/><span>{goal.title}</span></span>)}</div><button className="habit-remove" onClick={() => onRemove(habit)} aria-label={`Remove habit ${habit.name}`} title={`Remove ${habit.name}`}><Trash2 size={14} /></button></div></th>
+            <th scope="row" className="habit-name-cell"><div className="habit-row-content"><div><span className="habit-title-line"><button className="habit-name-label habit-detail-trigger" onClick={() => onHabitClick(habit)}>{habit.name}</button><StreakBadge records={records} habit={habit} />{habit.nonNegotiable && <span className="non-negotiable-badge">Non-negotiable</span>}</span><span className="habit-goal-label">{count} of {habit.goal} {habit.cadence === "month" ? "this month" : "this week"}</span>{goals.filter((goal) => habit.goalIds?.includes(goal.id)).map((goal) => <span className="connected-goal-tag" key={goal.id} title={goal.title}><Target size={11}/><span>{goal.title}</span></span>)}</div><button className="habit-remove" onClick={() => onRemove(habit)} aria-label={`Remove habit ${habit.name}`} title={`Remove ${habit.name}`}><Trash2 size={14} /></button></div></th>
             {dates.map((date) => {
               const complete = hasCheckin(habit, date);
               const isFuture = dateKey(date) > todayKey();

@@ -120,6 +120,19 @@ export function monthCheckinCount(records: AppRecord[], habitId: string, date: D
   return records.filter((item) => item.type === "checkin" && item.habitId === habitId && item.completed && item.date.startsWith(month) && !item.deletedAt).length;
 }
 
+/**
+ * Days in a row a habit has been checked off, counting back from today. A habit not yet checked
+ * today keeps the run it had through yesterday, since today is not over.
+ */
+export function habitStreak(records: AppRecord[], habitId: string, today = new Date()) {
+  const done = new Set(records.filter((item) => item.type === "checkin" && item.habitId === habitId && item.completed && !item.deletedAt).map((item) => (item as CheckIn).date));
+  const cursor = new Date(today.getFullYear(), today.getMonth(), today.getDate(), 12);
+  if (!done.has(dateKey(cursor))) cursor.setDate(cursor.getDate() - 1);
+  let streak = 0;
+  while (done.has(dateKey(cursor))) { streak += 1; cursor.setDate(cursor.getDate() - 1); }
+  return streak;
+}
+
 export function calculateRecentProgress(records: AppRecord[], habits: Habit[], endDate: Date, dayCount = 7) {
   const activeHabits = habits.filter((habit) => !habit.deletedAt);
   const checkins = records.filter((record): record is CheckIn => record.type === "checkin" && record.completed && !record.deletedAt);
