@@ -1,5 +1,5 @@
-import { useEffect, useRef, useState, type FormEvent } from "react";
-import { BookOpen, Camera, ChevronLeft, ChevronRight, CloudOff, Copy, Eye, EyeOff, ImageOff, KeyRound, LockKeyhole, Plus, RefreshCw, Trash2, UnlockKeyhole, X } from "lucide-react";
+import { useEffect, useRef, useState, type ChangeEvent, type FormEvent } from "react";
+import { BookOpen, Camera, ChevronLeft, ChevronRight, CloudOff, Copy, Eye, EyeOff, ImageOff, Images, KeyRound, LockKeyhole, Plus, RefreshCw, Trash2, UnlockKeyhole, X } from "lucide-react";
 import type { JournalEntry } from "./types";
 import {
   baseOf, changePassword, createVault, decryptPhoto, deriveWriteToken, encryptPhoto, JournalVaultError, mergeJournalContent,
@@ -79,6 +79,38 @@ export function PasswordInput({ value, onChange, autoComplete, placeholder, auto
 }
 
 /**
+ * "Add a photo" with a choice of camera or gallery. On Android a plain image picker goes straight to
+ * the photo library, so on touch screens the button opens a small menu instead; the camera input
+ * uses `capture`, which opens the camera app directly. Computers have no camera choice to make, so
+ * there the button opens the file picker as before.
+ */
+function AddPhotoButton({ busy, busyLabel, disabled, iconSize, onPick }: { busy: boolean; busyLabel: string; disabled: boolean; iconSize: number; onPick: (file?: File) => void }) {
+  const [open, setOpen] = useState(false);
+  const wrap = useRef<HTMLDivElement>(null);
+  const toggle = useRef<HTMLButtonElement>(null);
+  const camera = useRef<HTMLInputElement>(null);
+  const gallery = useRef<HTMLInputElement>(null);
+  const showMenu = open && !busy && !disabled;
+  const touch = matchMedia("(pointer: coarse)").matches;
+  useEffect(() => {
+    if (!showMenu) return;
+    const outside = (event: PointerEvent) => { if (!wrap.current?.contains(event.target as Node)) setOpen(false); };
+    const escape = (event: KeyboardEvent) => { if (event.key === "Escape") { setOpen(false); toggle.current?.focus(); } };
+    document.addEventListener("pointerdown", outside);
+    document.addEventListener("keydown", escape);
+    return () => { document.removeEventListener("pointerdown", outside); document.removeEventListener("keydown", escape); };
+  }, [showMenu]);
+  const choose = (input: HTMLInputElement | null) => { setOpen(false); input?.click(); };
+  const picked = (event: ChangeEvent<HTMLInputElement>) => { const file = event.target.files?.[0]; event.target.value = ""; onPick(file); };
+  return <div className="photo-picker" ref={wrap}>
+    <button ref={toggle} className="soft-button" type="button" disabled={busy || disabled} aria-expanded={touch ? showMenu : undefined} onClick={() => touch ? setOpen(!open) : gallery.current?.click()}><Camera size={iconSize} /> {busy ? busyLabel : "Add a photo"}</button>
+    {showMenu && <div className="photo-picker-menu"><button type="button" autoFocus onClick={() => choose(camera.current)}><Camera size={17} /> Take a photo</button><button type="button" onClick={() => choose(gallery.current)}><Images size={17} /> Choose from gallery</button></div>}
+    <input ref={camera} className="visually-hidden" type="file" accept="image/*" capture="environment" tabIndex={-1} aria-hidden="true" onChange={picked} />
+    <input ref={gallery} className="visually-hidden" type="file" accept="image/*" tabIndex={-1} aria-hidden="true" onChange={picked} />
+  </div>;
+}
+
+/**
  * The private journal. Everything is encrypted in the browser with a key that only the passphrase
  * (or the recovery code) unlocks. Saves are version-checked: when another device saved first, the
  * two copies are merged instead of one overwriting the other. Unsent edits are kept, encrypted, on
@@ -119,7 +151,6 @@ export function JournalPage({ active, legacyEntries, onLegacyMigrated }: { activ
   const purgedPhotos = useRef(new Set<string>());
   const activeRef = useRef(active);
   const awaySince = useRef<number | null>(null);
-  const photoInput = useRef<HTMLInputElement>(null);
 
   const showContent = (next: JournalContent) => { contentRef.current = next; setContentState(next); };
 
@@ -429,7 +460,6 @@ export function JournalPage({ active, legacyEntries, onLegacyMigrated }: { activ
 
   const addPhoto = async (file?: File) => {
     const key = keyRef.current, token = tokenRef.current;
-    if (photoInput.current) photoInput.current.value = "";
     if (!file || !key || !token) return;
     setError(""); setNotice(""); setPhotoBusy(true);
     try {
@@ -576,12 +606,12 @@ export function JournalPage({ active, legacyEntries, onLegacyMigrated }: { activ
 
   return <div className="journal-workspace">
     {recoveryCode && <section className="recovery-card paper-sheet"><div><span className="journal-kicker">Save this recovery code</span><h2>Keep a way back in</h2><p>If you forget your passphrase, this code is the only way to open the journal. Save it somewhere separate from this device — it won’t be shown again.</p><code>{recoveryCode}</code></div><button className="soft-button" onClick={() => void copyRecoveryCode()}><Copy size={16} /> Copy code</button><button className="soft-button" onClick={() => setRecoveryCode("")}>I’ve saved it</button><button className="icon-button" onClick={() => setRecoveryCode("")} aria-label="Close recovery code"><X size={18} /></button></section>}
-    <div className="journal-toolbar"><div className="journal-save-state">{offline || failed ? <CloudOff size={15} /> : <LockKeyhole size={15} />}<span>{statusLabel}</span>{(offline || failed) && !locking && <button className="text-link" type="button" onClick={() => void runSync(true)}>Retry now</button>}</div><div className="journal-tools"><button className="soft-button" disabled={photoBusy || locking} onClick={() => photoInput.current?.click()}><Camera size={16} /> {photoBusy ? "Adding photo…" : "Add a photo"}</button><input ref={photoInput} className="visually-hidden" type="file" accept="image/*" onChange={(event) => void addPhoto(event.target.files?.[0])} /><button className="quiet-button" disabled={locking} onClick={() => { setChangingPassword(!changingPassword); setNewPassword(""); setConfirm(""); setError(""); }}><KeyRound size={15} /> Passphrase</button><button className="icon-button" disabled={locking} onClick={() => void lock()} aria-label="Lock the journal" title="Lock the journal"><LockKeyhole size={17} /></button></div></div>
+    <div className="journal-toolbar"><div className="journal-save-state">{offline || failed ? <CloudOff size={15} /> : <LockKeyhole size={15} />}<span>{statusLabel}</span>{(offline || failed) && !locking && <button className="text-link" type="button" onClick={() => void runSync(true)}>Retry now</button>}</div><div className="journal-tools"><AddPhotoButton busy={photoBusy} busyLabel="Adding photo…" disabled={locking} iconSize={16} onPick={(file) => void addPhoto(file)} /><button className="quiet-button" disabled={locking} onClick={() => { setChangingPassword(!changingPassword); setNewPassword(""); setConfirm(""); setError(""); }}><KeyRound size={15} /> Passphrase</button><button className="icon-button" disabled={locking} onClick={() => void lock()} aria-label="Lock the journal" title="Lock the journal"><LockKeyhole size={17} /></button></div></div>
     {changingPassword && <form className="password-change paper-sheet" onSubmit={change}><div><strong>Change your passphrase</strong><span>At least {MIN_PASSPHRASE} characters. Your recovery code stays the same.</span></div><PasswordInput autoComplete="new-password" value={newPassword} onChange={setNewPassword} placeholder="New passphrase" /><PasswordInput autoComplete="new-password" value={confirm} onChange={setConfirm} placeholder="Type it again" label="confirmation" /><button className="soft-button" type="submit" disabled={busy}>{busy ? "Saving…" : "Save passphrase"}</button></form>}
     {(error || notice) && <p className={`journal-flash ${error ? "has-error" : ""}`} role={error ? "alert" : "status"}>{error || notice}</p>}
     <section className="sticky-note paper-sheet"><div className="sticky-note-heading"><span className="sticky-pin"/><div><span className="journal-kicker">Post-it</span><strong>Keep one thought in front</strong></div><small>Private and encrypted</small></div><textarea aria-label="Your private post-it note" maxLength={400} value={content.stickyNote ?? ""} readOnly={locking} onChange={(event) => { const value = event.target.value; edit((current) => ({ ...current, stickyNote: value, stickyNoteUpdatedAt: Date.now() })); }} placeholder="One thing to remember…" rows={2}/></section>
     <section className="journal-paper paper-sheet" aria-label="Journal page"><div className="paper-page-top"><span>DAYBOOK · PERSONAL NOTES</span><span>{String(pageIndex + 1).padStart(2, "0")}</span></div><textarea aria-label={`Journal page ${pageIndex + 1}`} className="freeflow-page" value={page?.text ?? ""} readOnly={locking} onBlur={() => void runSync(false)} onChange={(event) => updatePage(event.target.value)} placeholder="Let your thoughts find their own shape…" spellCheck /><div className="paper-page-bottom"><span>Write freely. This page has no date or prompt.</span><div className="page-turn"><button className="icon-button" disabled={pageIndex === 0} onClick={() => goToPage(pageIndex - 1)} aria-label="Previous page"><ChevronLeft size={18} /></button><span>Page {pageIndex + 1} of {content.pages.length}</span><button className="icon-button" disabled={pageIndex === content.pages.length - 1} onClick={() => goToPage(pageIndex + 1)} aria-label="Next page"><ChevronRight size={18} /></button><button className="soft-button page-add" disabled={locking} onClick={addPage}><Plus size={15} /> New page</button></div></div></section>
-    <section className="photo-gallery paper-sheet"><div className="gallery-heading"><span className="lock-emblem"><Camera size={18} /></span><div><h2>Private photo gallery</h2><p>Pictures are separate from your writing and encrypted before upload.</p></div><button className="soft-button" disabled={photoBusy || locking} onClick={() => photoInput.current?.click()}><Camera size={15} /> {photoBusy ? "Adding…" : "Add a photo"}</button></div>
+    <section className="photo-gallery paper-sheet"><div className="gallery-heading"><span className="lock-emblem"><Camera size={18} /></span><div><h2>Private photo gallery</h2><p>Pictures are separate from your writing and encrypted before upload.</p></div><AddPhotoButton busy={photoBusy} busyLabel="Adding…" disabled={locking} iconSize={15} onPick={(file) => void addPhoto(file)} /></div>
       {content.photos.length ? <div className="gallery-grid">{content.photos.map((photo) => {
         const source = photo.image ?? photoUrls[photo.id];
         return <figure className="gallery-photo" key={photo.id}>{source && source !== MISSING_PHOTO ? <img src={source} alt={photo.label || "Private gallery photo"} /> : <div className="gallery-photo-placeholder" aria-label={source === MISSING_PHOTO ? "Photo unavailable" : "Loading photo"}>{source === MISSING_PHOTO ? <><ImageOff size={20} /><span>Photo unavailable</span></> : <span>Decrypting…</span>}</div>}<div><input aria-label="Photo label" value={photo.label} readOnly={locking} maxLength={120} onChange={(event) => { const label = event.target.value; edit((current) => ({ ...current, photos: current.photos.map((item) => item.id === photo.id ? { ...item, label, labelUpdatedAt: Date.now() } : item) })); }} /><button className="row-delete" disabled={locking} onClick={() => removePhoto(photo.id)} aria-label="Remove photo"><Trash2 size={15} /></button></div></figure>;

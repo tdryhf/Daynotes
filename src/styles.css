@@ -314,6 +314,11 @@ button:not(:disabled):active { translate: 0 1px; }
 .gallery-heading > div { flex: 1; }
 .gallery-heading h2 { font-size: 1.02rem; }
 .gallery-heading p { margin-top: var(--space-2xs); color: var(--color-muted); font-size: .77rem; }
+.photo-picker { position: relative; flex: 0 0 auto; }
+.photo-picker-menu { position: absolute; z-index: var(--z-dropdown); top: calc(100% + 8px); right: 0; display: grid; min-width: 220px; padding: var(--space-2xs); border: 1px solid var(--color-edge); border-radius: var(--radius-stock); background-color: var(--color-card); background-image: var(--paper-grain), var(--paper-fiber); box-shadow: 0 3px 0 var(--color-edge), 0 12px 28px color-mix(in oklab, var(--color-ink) 14%, transparent); }
+.photo-picker-menu button { display: flex; align-items: center; gap: var(--space-sm); min-height: 48px; padding: 0 var(--space-sm); border: 0; border-radius: var(--radius-13); background: transparent; color: var(--color-ink-2); font-size: .9rem; font-weight: 600; text-align: left; white-space: nowrap; }
+.photo-picker-menu button:active { background: var(--color-paper-2); }
+@media (hover: hover) { .photo-picker-menu button:hover { background: var(--color-paper-2); } }
 .gallery-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(170px, 1fr)); gap: var(--space-md); padding-top: var(--space-md); }
 .gallery-photo { min-width: 0; margin: 0; overflow: hidden; border: 1px solid var(--color-rule); border-radius: var(--radius-stock); background: var(--color-paper); }
 .gallery-photo img { display: block; width: 100%; aspect-ratio: 4 / 3; object-fit: cover; background: var(--color-paper-2); }
@@ -522,7 +527,8 @@ button:not(:disabled):active { translate: 0 1px; }
   .photo-gallery { padding: var(--space-md); }
   .gallery-heading { align-items: start; flex-wrap: wrap; }
   .gallery-heading > div { min-width: calc(100% - 62px); }
-  .gallery-heading > .soft-button { margin-left: 54px; }
+  .gallery-heading > .photo-picker { margin-left: 54px; }
+  .gallery-heading .photo-picker-menu { right: auto; left: 0; }
   .gallery-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--space-xs); }
   .recovery-card { align-items: start; flex-wrap: wrap; }
   .recovery-card > div { min-width: calc(100% - 50px); }
