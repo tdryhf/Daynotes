@@ -8,6 +8,7 @@
         android:allowBackup="true"
         android:icon="@mipmap/ic_launcher"
         android:label="@string/appName"
+        android:manageSpaceActivity="com.google.androidbrowserhelper.trusted.ManageDataLauncherActivity"
         android:supportsRtl="true"
         android:theme="@android:style/Theme.Translucent.NoTitleBar">
 
@@ -55,6 +56,18 @@
                     android:scheme="https"
                     android:host="daynotes-nu.vercel.app" />
             </intent-filter>
+        </activity>
+
+        <!--
+            Opens Chrome's site settings and storage for Daybook: from the app's "Manage space"
+            button in Android settings, and from the "Site settings" shortcut on a long press of the
+            icon. LauncherActivity turns this activity on or off at every launch, so the app crashes
+            on start if it isn't declared here.
+        -->
+        <activity android:name="com.google.androidbrowserhelper.trusted.ManageDataLauncherActivity">
+            <meta-data
+                android:name="android.support.customtabs.trusted.MANAGE_SPACE_URL"
+                android:value="@string/launchUrl" />
         </activity>
 
         <!-- Lets Chrome ask for Android 13+ notification permission on Daybook's behalf. -->
