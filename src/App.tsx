@@ -8,7 +8,7 @@ import { dateKey, habitStreak, hasSampleRecords, isAppRecord, liveRecords, loadL
 import { cloudConfigured } from "./sync";
 import { sameRecords, useCloudSync, type SyncState } from "./useCloudSync";
 import { JournalPage } from "./journal";
-import type { AppRecord, CustomTracker, FamilyDate, Goal, GoalDraft, Habit, Idea, JournalNote, PerformanceReflection, Task, TaskCategory, View } from "./types";
+import type { AppRecord, CheckIn, CustomTracker, FamilyDate, Goal, GoalDraft, Habit, Idea, JournalNote, PerformanceReflection, Task, TaskCategory, View } from "./types";
 import { refineNote, type AssistantToolCall } from "./ai";
 import { editTime } from "./clock";
 import { AssistantDialog, ConsistencyVisualization, GoalCoachDialog, GoalsPage, HabitDetailsDialog, RemindersPage, TaskDetailsDialog, TaskTitleButton, TrackerDetailsDialog, TrackersPage } from "./features";
@@ -95,6 +95,8 @@ function App() {
   const [timerSeconds, setTimerSeconds] = useState(0);
   const [timerRunning, setTimerRunning] = useState(false);
   const [timerMinutes, setTimerMinutes] = useState(20);
+  const [timerElapsed, setTimerElapsed] = useState(0);
+  const [ratingFor, setRatingFor] = useState<{ habit: Habit; date: string; suggestedMinutes?: number } | null>(null);
   const [month, setMonth] = useState(() => new Date());
   const [matrixMode, setMatrixMode] = useState<"week" | "month">("week");
   const [taskFilter, setTaskFilter] = useState("Today");
@@ -181,6 +183,7 @@ function App() {
   useEffect(() => {
     if (!timerRunning) return;
     const interval = window.setInterval(() => {
+      setTimerElapsed((elapsed) => elapsed + 1);
       setTimerSeconds((seconds) => {
         if (seconds <= 1) { setTimerRunning(false); setToast("Your focus time is up."); return 0; }
         return seconds - 1;
@@ -298,15 +301,27 @@ function App() {
     setToast("Habit deleted.");
   };
 
-  const toggleCheckin = (habit: Habit, date: Date) => {
+  const findCheckin = (habit: Habit, key: string) => records.find((record): record is CheckIn => record.type === "checkin" && record.habitId === habit.id && record.date === key && !record.deletedAt);
+
+  const toggleCheckin = (habit: Habit, date: Date, suggestedMinutes?: number) => {
     const key = dateKey(date);
-    const found = records.find((record) => record.type === "checkin" && record.habitId === habit.id && record.date === key && !record.deletedAt);
-    const record = found && found.type === "checkin"
-      ? { ...found, completed: !found.completed, updatedAt: editTime(), sample: false }
-      : { id: `${habit.id}:${key}`, type: "checkin" as const, habitId: habit.id, date: key, completed: true, updatedAt: editTime() };
+    const found = findCheckin(habit, key);
+    // Unchecking a day also clears its rating and minutes, so a later check-off starts fresh.
+    const record: CheckIn = found
+      ? { ...found, completed: !found.completed, ...(found.completed ? { rating: undefined, minutesSpent: undefined } : {}), updatedAt: editTime(), sample: false }
+      : { id: `${habit.id}:${key}`, type: "checkin", habitId: habit.id, date: key, completed: true, updatedAt: editTime() };
     if (key === todayKey() && !record.completed && completedToday === habits.length) setCelebrateAllHabits(false);
     if (key === todayKey() && record.completed && completedToday + 1 >= habits.length && habits.length > 0) setCelebrateAllHabits(true);
     saveRecord(record);
+    if (record.completed && habit.rateCheckIns) setRatingFor({ habit, date: key, suggestedMinutes });
+  };
+
+  const saveCheckinRating = (habit: Habit, key: string, rating: number | undefined, minutesSpent: number | undefined) => {
+    const found = findCheckin(habit, key);
+    if (!found || !found.completed) return;
+    saveRecord({ ...found, rating, minutesSpent, updatedAt: editTime(), sample: false });
+    setRatingFor(null);
+    setToast(`${habit.name}: ${[rating && `${rating} of 5`, minutesSpent && `${minutesSpent} min`].filter(Boolean).join(", ")} saved.`);
   };
 
   const savePerformanceReflection = (startDate: string, endDate: string, text: string) => {
@@ -522,7 +537,7 @@ function App() {
             </div>
           </div>
 
-          {view === "today" && <TodayPage habits={habits} records={records} tasks={dueToday} goals={goals} onToggle={toggleCheckin} onTimer={(habit) => { setTimerHabit(habit); setTimerSeconds((habit.minutes || 20) * 60); setTimerMinutes(habit.minutes || 20); setTimerRunning(false); }} onAdd={() => setDialog("habit")} onNavigate={chooseView} onHabitClick={setDetailHabit} celebrateAllHabits={celebrateAllHabits} />}
+          {view === "today" && <TodayPage habits={habits} records={records} tasks={dueToday} goals={goals} onToggle={toggleCheckin} onRate={(habit, date) => setRatingFor({ habit, date })} onTimer={(habit) => { setTimerHabit(habit); setTimerSeconds((habit.minutes || 20) * 60); setTimerMinutes(habit.minutes || 20); setTimerElapsed(0); setTimerRunning(false); }} onAdd={() => setDialog("habit")} onNavigate={chooseView} onHabitClick={setDetailHabit} celebrateAllHabits={celebrateAllHabits} />}
           {view === "insights" && <InsightsPage records={records} habits={habits} notes={notes} reflections={reflections} onSaveReflection={savePerformanceReflection} onAddHabit={() => setDialog("habit")} />}
           {view === "habits" && <HabitsPage habits={habits} goals={goals} records={records} month={month} setMonth={setMonth} mode={matrixMode} setMode={setMatrixMode} onToggle={toggleCheckin} onAdd={() => setDialog("habit")} onRemove={deleteHabit} onHabitClick={setDetailHabit} />}
           {view === "tasks" && <TasksPage tasks={tasks} goals={goals} notes={notes} filter={taskFilter} setFilter={setTaskFilter} categoryFilter={taskCategoryFilter} setCategoryFilter={setTaskCategoryFilter} onToggle={toggleTask} onDelete={deleteTask} onAdd={() => setDialog("task")} onTaskClick={setDetailTask} />}
@@ -540,13 +555,14 @@ function App() {
         </nav>
       </div>
 
-      {detailHabit && <HabitDetailsDialog habit={detailHabit} notes={notes} onClose={() => setDetailHabit(null)} onEdit={() => editHabit(detailHabit)} onDelete={() => deleteHabit(detailHabit)} onSaveNote={(text, date) => saveNote("habit", detailHabit.id, detailHabit.name, text, date)} />}
+      {detailHabit && <HabitDetailsDialog habit={detailHabit} notes={notes} checkins={records.filter((record): record is CheckIn => record.type === "checkin" && record.habitId === detailHabit.id && record.completed && !record.deletedAt)} onClose={() => setDetailHabit(null)} onEdit={() => editHabit(detailHabit)} onDelete={() => deleteHabit(detailHabit)} onSaveNote={(text, date) => saveNote("habit", detailHabit.id, detailHabit.name, text, date)} />}
       {detailTask && <TaskDetailsDialog task={detailTask} notes={notes} onClose={() => setDetailTask(null)} onSaveNote={(text, date) => saveNote("task", detailTask.id, detailTask.title, text, date)} />}
       {detailTracker && <TrackerDetailsDialog tracker={detailTracker} entries={trackerEntries.filter((entry) => entry.trackerId === detailTracker.id)} notes={notes} onClose={() => setDetailTracker(null)} onUpdate={(fields) => { const updated = { ...detailTracker, ...fields, updatedAt: editTime(), sample: false }; saveRecord(updated); setDetailTracker(updated); }} onLog={(value, date, note) => logTrackerEntry(detailTracker, value, date, note)} onSaveNote={(text, date) => saveNote("tracker", detailTracker.id, detailTracker.name, text, date)} />}
       {assistantOpen && <AssistantDialog records={records} onClose={() => setAssistantOpen(false)} onToolCall={executeAssistantTool} />}
       {goalCoachOpen && <GoalCoachDialog records={records} onClose={() => setGoalCoachOpen(false)} onUseGoal={(draft) => { setGoalDraft(draft); setGoalCoachOpen(false); setDialog("goal"); }} />}
       {dialog && <EntryDialog key={editingHabit?.id ?? `new-${dialog}`} kind={dialog} habit={editingHabit ?? undefined} goals={goals} habits={habits} tasks={tasks} initialGoal={dialog === "goal" ? goalDraft ?? undefined : undefined} onClose={() => { setDialog(null); setEditingHabit(null); setGoalDraft(null); }} onSave={(fields) => dialog === "habit" ? saveHabit(fields) : addRecord(dialog, fields)} />}
-      {timerHabit && <TimerDialog habit={timerHabit} seconds={timerSeconds} minutes={timerMinutes} running={timerRunning} onMinutes={setTimerMinutes} onStart={() => { if (timerSeconds === 0) setTimerSeconds(timerMinutes * 60); setTimerRunning(true); }} onPause={() => setTimerRunning(false)} onStop={() => { setTimerRunning(false); setTimerSeconds(0); }} onDone={() => { toggleCheckin(timerHabit, new Date()); setTimerRunning(false); setTimerHabit(null); setToast(`${timerHabit.name} checked off.`); }} onClose={() => { setTimerRunning(false); setTimerHabit(null); }} />}
+      {timerHabit && <TimerDialog habit={timerHabit} seconds={timerSeconds} minutes={timerMinutes} running={timerRunning} onMinutes={setTimerMinutes} onStart={() => { if (timerSeconds === 0) setTimerSeconds(timerMinutes * 60); setTimerRunning(true); }} onPause={() => setTimerRunning(false)} onStop={() => { setTimerRunning(false); setTimerSeconds(0); }} onDone={() => { const spent = timerElapsed >= 30 ? Math.max(1, Math.round(timerElapsed / 60)) : undefined; if (findCheckin(timerHabit, todayKey())?.completed) { if (timerHabit.rateCheckIns) setRatingFor({ habit: timerHabit, date: todayKey(), suggestedMinutes: spent }); } else { toggleCheckin(timerHabit, new Date(), spent); setToast(`${timerHabit.name} checked off.`); } setTimerRunning(false); setTimerHabit(null); }} onClose={() => { setTimerRunning(false); setTimerHabit(null); }} />}
+      {ratingFor && <RatingDialog key={`${ratingFor.habit.id}:${ratingFor.date}`} habit={ratingFor.habit} date={ratingFor.date} checkin={findCheckin(ratingFor.habit, ratingFor.date)} suggestedMinutes={ratingFor.suggestedMinutes} onSave={(rating, minutesSpent) => saveCheckinRating(ratingFor.habit, ratingFor.date, rating, minutesSpent)} onClose={() => setRatingFor(null)} />}
       <button className="assistant-fab" onClick={() => setAssistantOpen(true)} aria-label="Open Daybook assistant" title="Daybook assistant"><Sparkles size={17} /></button>
       <div className="live-toast" role="status" aria-live="polite">{toast}</div>
     </div>
@@ -578,8 +594,8 @@ function pageSubtitle(view: View) {
   return subtitles[view];
 }
 
-function TodayPage({ habits, records, tasks, goals, onToggle, onTimer, onAdd, onNavigate, onHabitClick, celebrateAllHabits }: {
-  habits: Habit[]; records: AppRecord[]; tasks: Task[]; goals: Goal[]; onToggle: (habit: Habit, date: Date) => void; onTimer: (habit: Habit) => void; onAdd: () => void; onNavigate: (view: View) => void; onHabitClick: (habit: Habit) => void; celebrateAllHabits: boolean;
+function TodayPage({ habits, records, tasks, goals, onToggle, onRate, onTimer, onAdd, onNavigate, onHabitClick, celebrateAllHabits }: {
+  habits: Habit[]; records: AppRecord[]; tasks: Task[]; goals: Goal[]; onToggle: (habit: Habit, date: Date) => void; onRate: (habit: Habit, date: string) => void; onTimer: (habit: Habit) => void; onAdd: () => void; onNavigate: (view: View) => void; onHabitClick: (habit: Habit) => void; celebrateAllHabits: boolean;
 }) {
   // The check-in list can be stepped back to an earlier day to fill in habits that were missed.
   // A remembered past day stays put; anything that is not in the past shows today.
@@ -616,11 +632,13 @@ function TodayPage({ habits, records, tasks, goals, onToggle, onTimer, onAdd, on
         {habits.length === 0 && <EmptyState text="Your habit page is blank." detail="Add one small thing you would like to do more often." action="Add a habit" onClick={onAdd} />}
         {habits.slice(0, 8).map((habit) => {
           const complete = isChecked(habit.id);
+          const checkin = complete ? records.find((record): record is CheckIn => record.type === "checkin" && record.habitId === habit.id && record.date === shownKey && !record.deletedAt) : undefined;
+          const showRating = Boolean(checkin && (habit.rateCheckIns || checkin.rating || checkin.minutesSpent));
           const progress = countCadence(records, habit, shownDate);
           const period = `${inCurrentPeriod(habit) ? "this" : "that"} ${habit.cadence === "month" ? "month" : "week"}`;
           return <div className={`daily-row ${complete ? "is-complete" : ""}`} key={habit.id}>
             <button className="check-button" onClick={() => onToggle(habit, shownDate)} aria-label={`${complete ? "Uncheck" : "Check off"} ${habit.name}${isToday ? "" : ` for ${dayName === "Yesterday" ? "yesterday" : dayName}`}`} aria-pressed={complete}><Check size={15} /></button>
-            <span className="daily-habit-copy"><button className="daily-habit-name habit-detail-trigger" onClick={() => onHabitClick(habit)}>{habit.name}</button><StreakBadge records={records} habit={habit} />{habit.nonNegotiable && <span className="non-negotiable-badge">Non-negotiable</span>}{goals.filter((goal) => habit.goalIds?.includes(goal.id)).map((goal) => <span className="connected-goal-tag" key={goal.id} title={goal.title}><Target size={11}/><span>{goal.title}</span></span>)}</span>
+            <span className="daily-habit-copy"><button className="daily-habit-name habit-detail-trigger" onClick={() => onHabitClick(habit)}>{habit.name}</button><StreakBadge records={records} habit={habit} />{showRating && checkin && <RatingChip checkin={checkin} onClick={() => onRate(habit, shownKey)} />}{habit.nonNegotiable && <span className="non-negotiable-badge">Non-negotiable</span>}{goals.filter((goal) => habit.goalIds?.includes(goal.id)).map((goal) => <span className="connected-goal-tag" key={goal.id} title={goal.title}><Target size={11}/><span>{goal.title}</span></span>)}</span>
             {habit.minutes && isToday && <button className="timer-link" onClick={() => onTimer(habit)}><Timer size={14} /><span>{habit.minutes} min</span></button>}
             <span className="goal-progress"><strong>{progress}</strong> / {habit.goal}<span className="goal-cadence">{period}</span></span>
           </div>;
@@ -776,7 +794,7 @@ function EntryDialog({ kind, habit, goals, habits, tasks, initialGoal, onClose, 
     if (kind === "habit") {
       const name = value("name"); const goal = Number(value("goal"));
       if (!name || !Number.isFinite(goal) || goal < 1 || goal > 1000) { setError("Add a name and a goal between 1 and 1,000."); return; }
-      onSave({ name, goal, cadence: value("cadence"), minutes: Number(value("minutes")) || undefined, successCriteria: value("successCriteria") || undefined, nonNegotiable: form.get("nonNegotiable") === "on", goalIds: form.getAll("goalIds").map(String) } as Partial<Habit> as Record<string, unknown>); return;
+      onSave({ name, goal, cadence: value("cadence"), minutes: Number(value("minutes")) || undefined, successCriteria: value("successCriteria") || undefined, nonNegotiable: form.get("nonNegotiable") === "on", rateCheckIns: form.get("rateCheckIns") === "on", goalIds: form.getAll("goalIds").map(String) } as Partial<Habit> as Record<string, unknown>); return;
     }
     if (kind === "task") {
       const title = value("title"); if (!title) { setError("Add a short name for this to-do."); return; }
@@ -823,6 +841,7 @@ function EntryDialog({ kind, habit, goals, habits, tasks, initialGoal, onClose, 
         <label className="field"><span>Success criteria <em>What counts as done?</em></span><textarea className="input-control textarea-control" name="successCriteria" rows={3} placeholder="For example, read at least 10 pages before bed" defaultValue={habit?.successCriteria ?? ""} /></label>
         {goals.length > 0 && <fieldset className="goal-link-list"><legend>Goals this habit supports</legend>{goals.map((goal) => <label key={goal.id}><input type="checkbox" name="goalIds" value={goal.id} defaultChecked={habit?.goalIds?.includes(goal.id)} /><span>{goal.title}</span></label>)}</fieldset>}
         <label className="habit-priority-toggle"><input type="checkbox" name="nonNegotiable" defaultChecked={habit?.nonNegotiable ?? false} /><span><strong>Non-negotiable</strong><small>Mark this as a habit you want to prioritize consistently.</small></span></label>
+        <label className="habit-priority-toggle"><input type="checkbox" name="rateCheckIns" defaultChecked={habit?.rateCheckIns ?? false} /><span><strong>Rating bar</strong><small>Each time you check this off, rate how it went from 1 to 5 and note the minutes you spent.</small></span></label>
       </>}
       {kind === "task" && <>
         <Field label="What needs doing?" name="title" placeholder="Add a to-do" required />
@@ -874,6 +893,56 @@ function EntryDialog({ kind, habit, goals, habits, tasks, initialGoal, onClose, 
 
 function Field({ label, name, placeholder, type = "text", required = false, defaultValue, min, max }: { label: string; name: string; placeholder?: string; type?: string; required?: boolean; defaultValue?: string | number; min?: string; max?: string }) {
   return <label className="field"><span>{label}{required && <em>Required</em>}</span><input className="input-control" name={name} type={type} placeholder={placeholder} required={required} defaultValue={defaultValue} min={min} max={max} /></label>;
+}
+
+/** The small rating summary on a checked-off habit. Tapping it reopens the rating bar for that day. */
+function RatingChip({ checkin, onClick }: { checkin: CheckIn; onClick: () => void }) {
+  const parts = [checkin.rating && `${checkin.rating}/5`, checkin.minutesSpent && `${checkin.minutesSpent} min`].filter(Boolean);
+  return <button className={`rating-chip ${parts.length ? "" : "is-empty"}`} onClick={onClick} aria-label={parts.length ? `Rated ${parts.join(", ")}. Change the rating` : "Rate how it went"}>
+    {checkin.rating ? <span className="rating-chip-bar" aria-hidden="true">{[1, 2, 3, 4, 5].map((step) => <i key={step} className={step <= checkin.rating! ? "is-filled" : ""} />)}</span> : null}
+    <span>{parts.length ? parts.join(" · ") : "Rate it"}</span>
+  </button>;
+}
+
+const ratingWords = ["", "Rough", "Not great", "Okay", "Good", "Went great"];
+
+/** Asks how a checked-off habit went (1 to 5) and how many minutes it took. Both are optional. */
+function RatingDialog({ habit, date, checkin, suggestedMinutes, onSave, onClose }: { habit: Habit; date: string; checkin?: CheckIn; suggestedMinutes?: number; onSave: (rating: number | undefined, minutesSpent: number | undefined) => void; onClose: () => void }) {
+  const dialogRef = useRef<HTMLDialogElement>(null);
+  const [rating, setRating] = useState(checkin?.rating ?? 0);
+  const [minutes, setMinutes] = useState(String(checkin?.minutesSpent ?? suggestedMinutes ?? ""));
+  const [error, setError] = useState("");
+  useEffect(() => {
+    const element = dialogRef.current;
+    if (!element) return;
+    element.showModal();
+    element.querySelector<HTMLInputElement>("input[name=rating]:checked, input[name=rating]")?.focus();
+    return () => { if (element.open) element.close(); };
+  }, []);
+  const submit = (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    const spent =minutes.trim() ? Number(minutes) : undefined;
+    if (spent !== undefined && (!Number.isInteger(spent) || spent < 1 || spent > 1440)) { setError("Minutes should be a whole number from 1 to 1,440."); return; }
+    if (!rating && spent === undefined) { setError("Pick a rating or add your minutes, or choose Skip."); return; }
+    onSave(rating || undefined, spent);
+  };
+  const day = date === todayKey() ? "Today" : dateLabel(date);
+  return <dialog className="entry-dialog rating-dialog" ref={dialogRef} onCancel={(event) => { event.preventDefault(); onClose(); }}>
+    <div className="dialog-heading"><div><h2>How did it go?</h2><p>{habit.name} · {day}</p></div><button className="icon-button" onClick={onClose} aria-label="Close"><X size={19} /></button></div>
+    <form onSubmit={submit} noValidate>
+      <fieldset className="rating-bar">
+        <legend>How well it went</legend>
+        <div className="rating-scale">{[1, 2, 3, 4, 5].map((step) => <label key={step} className={step <= rating ? "is-filled" : ""}>
+          <input type="radio" name="rating" value={step} checked={rating === step} onChange={() => { setRating(step); setError(""); }} aria-label={`${step} of 5, ${ratingWords[step].toLowerCase()}`} />
+          <span>{step}</span>
+        </label>)}</div>
+        <p className={`rating-scale-ends ${rating ? "is-chosen" : ""}`} aria-hidden="true">{rating ? <strong>{ratingWords[rating]}</strong> : <><span>Rough</span><span>Went great</span></>}</p>
+      </fieldset>
+      <label className="field"><span>Minutes you spent {habit.minutes ? <em>Your plan is {habit.minutes} min</em> : null}</span><input className="input-control" name="minutesSpent" type="number" inputMode="numeric" min="1" max="1440" step="1" placeholder={habit.minutes ? String(habit.minutes) : "For example, 20"} value={minutes} onChange={(event) => { setMinutes(event.target.value); setError(""); }} /></label>
+      {error && <p className="form-error" role="alert">{error}</p>}
+      <div className="dialog-actions"><button type="button" className="soft-button" onClick={onClose}>Skip</button><button className="primary-button"><Check size={16} /> Save</button></div>
+    </form>
+  </dialog>;
 }
 
 function TimerDialog({ habit, seconds, minutes, running, onMinutes, onStart, onPause, onStop, onDone, onClose }: {

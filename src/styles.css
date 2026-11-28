@@ -393,6 +393,35 @@ button:not(:disabled):active { translate: 0 1px; }
 .habit-criteria { display: grid; gap: var(--space-xs); padding: var(--space-md); border-radius: var(--radius-13); background: var(--color-paper); }
 .habit-criteria h3 { font-size: .84rem; }
 .habit-criteria p { color: var(--color-ink-2); font-size: .86rem; line-height: 1.55; white-space: pre-wrap; }
+/* Rating bar: how a checked-off habit went, 1 to 5, plus the minutes spent. */
+.rating-bar { display: grid; gap: var(--space-xs); min-width: 0; margin: 0; padding: 0; border: 0; }
+.rating-bar legend { margin-bottom: var(--space-xs); padding: 0; color: var(--color-ink-2); font-size: .77rem; font-weight: 650; }
+.rating-scale { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 3px; padding: 3px; border: 1px solid var(--color-edge); border-radius: var(--radius-input); background: var(--color-paper); }
+.rating-scale label { position: relative; display: grid; place-items: center; min-height: 48px; border-radius: var(--radius-11); background: var(--color-paper-2); color: var(--color-ink-2); font-size: 1rem; font-weight: 650; font-variant-numeric: tabular-nums; cursor: pointer; transition: background-color var(--dur-micro) var(--ease-out), color var(--dur-micro) var(--ease-out); }
+.rating-scale label.is-filled { background: var(--color-mint-deep); color: var(--color-card); }
+.rating-scale input { position: absolute; inset: 0; width: 100%; height: 100%; margin: 0; opacity: 0; cursor: pointer; }
+.rating-scale label:has(input:focus-visible) { outline: 2px solid var(--color-focus); outline-offset: 2px; }
+@media (hover: hover) { .rating-scale label:not(.is-filled):hover { background: var(--color-paper-3); color: var(--color-ink); } }
+.rating-scale-ends { display: flex; align-items: baseline; justify-content: space-between; min-height: 1lh; color: var(--color-muted); font-size: .7rem; }
+.rating-scale-ends.is-chosen { justify-content: center; }
+.rating-scale-ends strong { color: var(--color-ink); font-size: .8rem; font-weight: 650; }
+.rating-chip { position: relative; display: inline-flex; align-items: center; gap: 5px; min-height: 24px; padding: 2px 8px 2px 6px; border: 1px solid color-mix(in oklab, var(--color-mint-deep) 28%, var(--color-card)); border-radius: var(--radius-pill); background: color-mix(in oklab, var(--color-mint) 20%, var(--color-card)); color: var(--color-ink-2); font-size: .64rem; font-weight: 700; font-variant-numeric: tabular-nums; line-height: 1.4; white-space: nowrap; }
+.rating-chip::after { content: ""; position: absolute; inset: -6px -2px; }
+.rating-chip.is-empty { border-style: dashed; border-color: var(--color-edge); background: transparent; color: var(--color-muted); }
+@media (hover: hover) { .rating-chip:hover { border-color: var(--color-mint-deep); color: var(--color-ink); } }
+.rating-chip-bar { display: inline-flex; align-items: center; gap: 2px; }
+.rating-chip-bar i { width: 4px; height: 9px; background: color-mix(in oklab, var(--color-ink) 16%, transparent); }
+.rating-chip-bar i.is-filled { background: var(--color-mint-deep); }
+.habit-ratings { display: grid; gap: var(--space-sm); margin-top: var(--space-sm); padding: var(--space-md); border-radius: var(--radius-13); background: var(--color-paper); }
+.habit-ratings h3 { font-size: .84rem; }
+.habit-ratings > p:not([class]) { color: var(--color-muted); font-size: .82rem; line-height: 1.55; }
+.habit-rating-summary { display: flex; flex-wrap: wrap; gap: var(--space-xs) var(--space-lg); color: var(--color-muted); font-size: .74rem; }
+.habit-rating-summary strong { margin-right: 3px; color: var(--color-ink); font-size: 1rem; font-variant-numeric: tabular-nums; }
+.habit-rating-list { display: grid; margin: 0; padding: 0; list-style: none; }
+.habit-rating-list li { display: grid; grid-template-columns: minmax(0, 1fr) auto 60px; align-items: center; gap: var(--space-sm); padding: 7px 0; border-top: 1px dashed var(--color-rule); color: var(--color-ink-2); font-size: .78rem; }
+.habit-rating-list .rating-chip-bar i { width: 7px; height: 12px; }
+.habit-rating-minutes { color: var(--color-muted); font-variant-numeric: tabular-nums; text-align: right; }
+.habit-rating-none { color: var(--color-muted); font-size: .7rem; }
 .habit-delete-action { margin-right: auto; color: var(--color-error); }
 .field { display: grid; gap: var(--space-xs); min-width: 0; color: var(--color-ink-2); font-size: .8rem; }
 .field > span { display: flex; align-items: center; justify-content: space-between; gap: var(--space-xs); }

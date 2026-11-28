@@ -2,7 +2,7 @@ import { useEffect, useRef, useState, type FormEvent } from "react";
 import { Bell, Check, ChevronDown, Clock3, MessageSquareText, Plus, Send, Sparkles, Target, TrendingUp, Trash2, X } from "lucide-react";
 import { calculateConsistencyGrid } from "./data";
 import { askAssistant, askGoalCoach, type AssistantToolCall, type ChatMessage, type GoalCoachMessage } from "./ai";
-import type { AppRecord, CustomTracker, Goal, GoalDraft, GoalProgress, Habit, JournalNote, Reminder, Task, TrackerEntry } from "./types";
+import type { AppRecord, CheckIn, CustomTracker, Goal, GoalDraft, GoalProgress, Habit, JournalNote, Reminder, Task, TrackerEntry } from "./types";
 import { splitBold, splitReply } from "./richText";
 
 const BoldText = ({ text }: { text: string }) => <>{splitBold(text).map((piece, index) => piece.bold ? <strong key={index}>{piece.text}</strong> : piece.text)}</>;
@@ -81,15 +81,39 @@ export function NotesTimeline({ notes, ownerType, ownerId, ownerName, onSave }: 
   </div>;
 }
 
-export function HabitDetailsDialog({ habit, notes, onClose, onEdit, onDelete, onSaveNote }: { habit: Habit; notes: JournalNote[]; onClose: () => void; onEdit: () => void; onDelete: () => void; onSaveNote: (text: string, date: string) => Promise<void> }) {
+export function HabitDetailsDialog({ habit, notes, checkins, onClose, onEdit, onDelete, onSaveNote }: { habit: Habit; notes: JournalNote[]; checkins: CheckIn[]; onClose: () => void; onEdit: () => void; onDelete: () => void; onSaveNote: (text: string, date: string) => Promise<void> }) {
   const dialogRef = useRef<HTMLDialogElement>(null);
   useEffect(() => { const element = dialogRef.current; if (!element) return; element.showModal(); return () => { if (element.open) element.close(); }; }, []);
   return <dialog className="entry-dialog habit-details-dialog" ref={dialogRef} onCancel={(event) => { event.preventDefault(); onClose(); }}>
     <div className="dialog-heading"><div><p className="journal-kicker">Habit journal</p><h2>{habit.name}</h2><p>{habit.nonNegotiable ? "Non-negotiable habit" : "Habit details"} · {habit.goal} times {habit.cadence === "month" ? "each month" : "each week"}</p></div><button className="icon-button" onClick={onClose} aria-label="Close habit details"><X size={19} /></button></div>
     <section className="habit-criteria"><h3>Success criteria</h3><p>{habit.successCriteria || "No success criteria added yet."}</p></section>
+    {(habit.rateCheckIns || checkins.some((checkin) => checkin.rating || checkin.minutesSpent)) && <HabitRatings checkins={checkins} />}
     <section className="detail-notes"><div className="feature-section-heading"><div><h3>Session notes</h3><p>Record distance, time, effort, or anything you want to remember.</p></div><MessageSquareText size={17} /></div><NotesTimeline notes={notes} ownerType="habit" ownerId={habit.id} ownerName={habit.name} onSave={onSaveNote} /></section>
     <div className="dialog-actions"><button className="quiet-button habit-delete-action" onClick={onDelete}>Delete habit</button><button className="soft-button" onClick={onClose}>Close</button><button className="primary-button" onClick={onEdit}>Edit habit</button></div>
   </dialog>;
+}
+
+/** What the rating bar has collected for one habit: the average rating, minutes logged, and recent days. */
+function HabitRatings({ checkins }: { checkins: CheckIn[] }) {
+  const logged = checkins.filter((checkin) => checkin.rating || checkin.minutesSpent).sort((a, b) => b.date.localeCompare(a.date));
+  const ratings = logged.flatMap((checkin) => checkin.rating ? [checkin.rating] : []);
+  const average = ratings.length ? ratings.reduce((sum, value) => sum + value, 0) / ratings.length : undefined;
+  const totalMinutes = logged.reduce((sum, checkin) => sum + (checkin.minutesSpent ?? 0), 0);
+  return <section className="habit-ratings">
+    <h3>How it’s been going</h3>
+    {logged.length ? <>
+      <p className="habit-rating-summary">
+        {average !== undefined && <span><strong>{average.toFixed(1)}</strong> average out of 5</span>}
+        {totalMinutes > 0 && <span><strong>{totalMinutes.toLocaleString()}</strong> minutes logged</span>}
+        <span><strong>{logged.length}</strong> {logged.length === 1 ? "day" : "days"} recorded</span>
+      </p>
+      <ol className="habit-rating-list">{logged.slice(0, 10).map((checkin) => <li key={checkin.id}>
+        <time dateTime={checkin.date}>{prettyDate(checkin.date, { weekday: "short", month: "short", day: "numeric" })}</time>
+        {checkin.rating ? <span className="rating-chip-bar" role="img" aria-label={`${checkin.rating} of 5`}>{[1, 2, 3, 4, 5].map((step) => <i key={step} className={step <= checkin.rating! ? "is-filled" : ""} />)}</span> : <span className="habit-rating-none">No rating</span>}
+        <span className="habit-rating-minutes">{checkin.minutesSpent ? `${checkin.minutesSpent} min` : ""}</span>
+      </li>)}</ol>
+    </> : <p>Check this habit off and rate it. Each day’s rating and minutes will show up here.</p>}
+  </section>;
 }
 
 export function TaskDetailsDialog({ task, notes, onClose, onSaveNote }: { task: Task; notes: JournalNote[]; onClose: () => void; onSaveNote: (text: string, date: string) => Promise<void> }) {

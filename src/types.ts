@@ -12,12 +12,18 @@ export type Habit = BaseRecord & {
   successCriteria?: string;
   nonNegotiable?: boolean;
   goalIds?: string[];
+  /** The rating bar: checking this habit off asks how it went (1 to 5) and how many minutes it took. */
+  rateCheckIns?: boolean;
 };
 export type CheckIn = BaseRecord & {
   type: "checkin";
   habitId: string;
   date: string;
   completed: boolean;
+  /** How well it went, 1 (rough) to 5 (great). Only habits with the rating bar ask for it. */
+  rating?: number;
+  /** Minutes actually spent on the habit that day. */
+  minutesSpent?: number;
 };
 export type Task = BaseRecord & {
   type: "task";
